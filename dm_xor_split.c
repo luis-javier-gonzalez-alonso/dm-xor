@@ -6,17 +6,18 @@
 #include <linux/slab.h>
 #include <linux/random.h>
 
+/* Include our newly decoupled core logic */
+#include "xor_core.h"
+
 #define DM_MSG_PREFIX "dm_xor_split"
 #define MAX_SPLIT_DEVICES 8
 
-/* Context structure allocated per device-mapper instance */
 struct xor_split_ctx {
     int dev_count;
     struct dm_dev *devs[MAX_SPLIT_DEVICES];
     struct bio_set bio_set;
 };
 
-/* Tracking tracking structure handling async multi-bio completions */
 struct xor_io_tracker {
     struct xor_split_ctx *ctx;
     struct bio *orig_bio;
@@ -26,59 +27,59 @@ struct xor_io_tracker {
     struct bio *cloned_bios[MAX_SPLIT_DEVICES];
 };
 
-/* Inline helper to perform element-wise XOR over whole block vectors */
-static void xor_bio_buffers(struct bio *dst, struct bio *src) {
-    struct bio_vec bv_dst, bv_src;
-    struct bvec_iter iter_dst, iter_src;
-    void *addr_dst, *addr_src;
-    int i;
-
-    iter_src = src->bi_iter;
-    bio_for_each_segment(bv_dst, dst, iter_dst) {
-        if (!iter_src.bi_size) break;
-        bv_src = bio_iter_iovec(src, iter_src);
-
-        addr_dst = kmap_local_page(bv_dst.bv_page) + bv_dst.bv_offset;
-        addr_src = kmap_local_page(bv_src.bv_page) + bv_src.bv_offset;
-
-        for (i = 0; i < bv_dst.bv_len; i++) {
-            ((u8 *)addr_dst)[i] ^= ((u8 *)addr_src)[i];
-        }
-
-        kunmap_local(addr_src);
-        kunmap_local(addr_dst);
-        bio_advance_iter(src, &iter_src, bv_dst.bv_len);
-    }
+/* Wrapper to adapt the kernel's get_random_bytes to our pure C abstraction */
+static void kernel_random_wrapper(void *buf, size_t nbytes) {
+    get_random_bytes(buf, (int)nbytes);
 }
 
-/* Completion handler that processes read combinations or write cleanups */
 static void xor_split_end_io(struct bio *clone) {
     struct xor_io_tracker *tracker = clone->bi_private;
+    struct bio *orig = tracker->orig_bio;
     int i;
 
-    if (clone->bi_status) {
+    if (clone->bi_status != BLK_STS_OK) {
         tracker->bi_status = clone->bi_status;
     }
 
-    /* Process logic when the very last physical disk read/write completes */
     if (atomic_dec_and_test(&tracker->pending_bios)) {
-        struct bio *orig = tracker->orig_bio;
+        if (bio_data_dir(orig) == READ && tracker->bi_status == BLK_STS_OK) {
+            struct bio_vec bv_dst;
+            struct bvec_iter iter_dst;
+            int seg_idx = 0;
 
-        if (bio_data_dir(orig) == READ && !tracker->bi_status) {
-            /* Sequentially XOR data read from Disks 1..N-1 onto Disk 0 */
-            for (i = 1; i < tracker->dev_count; i++) {
-                xor_bio_buffers(tracker->cloned_bios[0], tracker->cloned_bios[i]);
+            /* Decode Phase: Read chunks from all clones and reconstruct directly into the original bio */
+            bio_for_each_segment(bv_dst, orig, iter_dst) {
+                uint8_t *mapped_srcs[MAX_SPLIT_DEVICES];
+                void *dst_page_addr = kmap_local_page(bv_dst.bv_page) + bv_dst.bv_offset;
+                int disk_idx;
+
+                /* Map all hardware source pages */
+                for (disk_idx = 0; disk_idx < tracker->dev_count; disk_idx++) {
+                    struct bio *clone_bio = tracker->cloned_bios[disk_idx];
+                    struct bio_vec *bv_src = &clone_bio->bi_io_vec[seg_idx];
+                    mapped_srcs[disk_idx] = kmap_local_page(bv_src->bv_page);
+                }
+
+                /* Execute decoupled math logic */
+                xor_split_decode(mapped_srcs, dst_page_addr, tracker->dev_count, bv_dst.bv_len);
+
+                /* Safely unmap in reverse order */
+                for (disk_idx = tracker->dev_count - 1; disk_idx >= 0; disk_idx--) {
+                    kunmap_local(mapped_srcs[disk_idx]);
+                }
+                kunmap_local(dst_page_addr);
+                seg_idx++;
             }
-            /* Copy the fully reconstructed payload straight to host buffer */
-            bio_copy_data(orig, tracker->cloned_bios[0]);
         }
 
-        /* Clean up all allocated clone allocations and data segments */
+        /* Clean up bounce allocations */
         for (i = 0; i < tracker->dev_count; i++) {
-            struct bio_vec *bv;
-            struct bvec_iter_all iter;
-            bio_for_each_segment_all(bv, tracker->cloned_bios[i], iter) {
-                __free_page(bv->bv_page);
+            struct bio_vec bv;
+            struct bvec_iter iter;
+            if (!tracker->cloned_bios[i]) continue;
+
+            bio_for_each_segment(bv, tracker->cloned_bios[i], iter) {
+                if (bv.bv_page) __free_page(bv.bv_page);
             }
             bio_put(tracker->cloned_bios[i]);
         }
@@ -93,13 +94,14 @@ static void xor_split_end_io(struct bio *clone) {
 static int xor_split_map(struct dm_target *ti, struct bio *bio) {
     struct xor_split_ctx *ctx = ti->private;
     struct xor_io_tracker *tracker;
-    int i;
+    int i, j;
+    int is_write = (bio_data_dir(bio) == WRITE);
 
     if (bio->bi_opf & REQ_PREFLUSH) {
         return DM_MAPIO_REMAPPED;
     }
 
-    tracker = kmalloc(sizeof(struct xor_io_tracker), GFP_NOIO);
+    tracker = kzalloc(sizeof(struct xor_io_tracker), GFP_NOIO);
     if (!tracker) return DM_MAPIO_REQUEUE;
 
     tracker->ctx = ctx;
@@ -108,12 +110,12 @@ static int xor_split_map(struct dm_target *ti, struct bio *bio) {
     tracker->dev_count = ctx->dev_count;
     atomic_set(&tracker->pending_bios, ctx->dev_count);
 
+    /* PHASE 1: Allocate matching sub-bios using exact segment sizes */
     for (i = 0; i < ctx->dev_count; i++) {
         struct bio *clone;
         struct bio_vec bv;
         struct bvec_iter iter;
 
-        /* Fix 1: Allocate a clean, independent bio instead of a shallow clone link */
         clone = bio_alloc_bioset(ctx->devs[i]->bdev, bio_segments(bio),
                                  bio->bi_opf, GFP_NOIO, &ctx->bio_set);
         if (!clone) goto allocation_failed;
@@ -123,38 +125,50 @@ static int xor_split_map(struct dm_target *ti, struct bio *bio) {
         clone->bi_private = tracker;
         clone->bi_end_io = xor_split_end_io;
 
-        /* Fix 2: Explicitly iterate the original request blocks to construct our clone */
+        /* Provision dedicated independent bounce layers */
         bio_for_each_segment(bv, bio, iter) {
             struct page *bounce_page = alloc_page(GFP_NOIO);
             if (!bounce_page) goto allocation_failed;
 
-            /* Securely append the physical page directly into the structural array */
             if (bio_add_page(clone, bounce_page, bv.bv_len, 0) < bv.bv_len) {
+                pr_err("[%s] Safeguard: bio_add_page failed\n", DM_MSG_PREFIX);
                 __free_page(bounce_page);
                 goto allocation_failed;
             }
         }
+    }
 
-        /* Populate data payload if the host is performing a WRITE operation */
-        if (bio_data_dir(bio) == WRITE) {
-            if (i < ctx->dev_count - 1) {
-                /* Disks 1 to N-1 get filled with random noise */
-                bio_for_each_segment(bv, clone, iter) {
-                    void *addr = kmap_local_page(bv.bv_page) + bv.bv_offset;
-                    get_random_bytes(addr, bv.bv_len);
-                    kunmap_local(addr);
-                }
-            } else {
-                /* The Final Disk N accumulates cleartext XORed with every random stream */
-                bio_copy_data(clone, bio);
-                for (int j = 0; j < ctx->dev_count - 1; j++) {
-                    xor_bio_buffers(clone, tracker->cloned_bios[j]);
-                }
+    /* PHASE 2: Encode Data Split Matrix via Core Library */
+    if (is_write) {
+        int seg_idx = 0;
+        struct bio_vec bv_src;
+        struct bvec_iter iter_src;
+
+        bio_for_each_segment(bv_src, bio, iter_src) {
+            uint8_t *mapped_addrs[MAX_SPLIT_DEVICES];
+            void *src_addr = kmap_local_page(bv_src.bv_page) + bv_src.bv_offset;
+            int disk_idx;
+
+            /* Map destination bounce pages */
+            for (disk_idx = 0; disk_idx < ctx->dev_count; disk_idx++) {
+                struct bio *clone = tracker->cloned_bios[disk_idx];
+                struct bio_vec *bv_dst = &clone->bi_io_vec[seg_idx];
+                mapped_addrs[disk_idx] = kmap_local_page(bv_dst->bv_page);
             }
+
+            /* Execute decoupled math logic injected with the kernel's random generator */
+            xor_split_encode(src_addr, mapped_addrs, ctx->dev_count, bv_src.bv_len, kernel_random_wrapper);
+
+            /* Safely unmap */
+            for (disk_idx = ctx->dev_count - 1; disk_idx >= 0; disk_idx--) {
+                kunmap_local(mapped_addrs[disk_idx]);
+            }
+            kunmap_local(src_addr);
+            seg_idx++;
         }
     }
 
-    /* Submit all prepared sub-bios asynchronously to their target devices */
+    /* PHASE 3: Non-blocking, Asynchronous Submission Queueing */
     for (i = 0; i < ctx->dev_count; i++) {
         submit_bio(tracker->cloned_bios[i]);
     }
@@ -162,15 +176,25 @@ static int xor_split_map(struct dm_target *ti, struct bio *bio) {
     return DM_MAPIO_SUBMITTED;
 
 allocation_failed:
-    /* Basic failure unwind omitted here for brevity */
+    for (j = 0; j < ctx->dev_count; j++) {
+        struct bio_vec bv;
+        struct bvec_iter iter;
+        if (!tracker->cloned_bios[j]) continue;
+
+        bio_for_each_segment(bv, tracker->cloned_bios[j], iter) {
+            if (bv.bv_page) __free_page(bv.bv_page);
+        }
+        bio_put(tracker->cloned_bios[j]);
+    }
     kfree(tracker);
     return DM_MAPIO_REQUEUE;
 }
 
-/* Device Mapper Constructor (.ctr) */
 static int xor_split_ctr(struct dm_target *ti, unsigned int argc, char **argv) {
     struct xor_split_ctx *ctx;
     int i, r;
+
+    pr_info("[%s] Initializing constructor instance\n", DM_MSG_PREFIX);
 
     if (argc < 2 || argc > MAX_SPLIT_DEVICES) {
         ti->error = "Invalid argument count. Provide between 2 and 8 raw target disks.";
@@ -182,14 +206,19 @@ static int xor_split_ctr(struct dm_target *ti, unsigned int argc, char **argv) {
 
     ctx->dev_count = argc;
     r = bioset_init(&ctx->bio_set, BIO_POOL_SIZE, 0, BIOSET_NEED_BVECS);
-    if (r) goto bad_ctx;
+    if (r) {
+        ti->error = "Bioset initialization failure";
+        goto bad_ctx;
+    }
 
     for (i = 0; i < argc; i++) {
         r = dm_get_device(ti, argv[i], dm_table_get_mode(ti->table), &ctx->devs[i]);
         if (r) {
             ti->error = "Target disk path acquisition failure";
+            pr_err("[%s] Failed to grab backend device descriptor for target: %s\n", DM_MSG_PREFIX, argv[i]);
             goto bad_devs;
         }
+        pr_info("[%s] Successfully attached physical device mapping: %s -> Index %d\n", DM_MSG_PREFIX, argv[i], i);
     }
 
     ti->private = ctx;
@@ -203,12 +232,13 @@ bad_ctx:
     return r;
 }
 
-/* Device Mapper Destructor (.dtr) */
 static void xor_split_dtr(struct dm_target *ti) {
     struct xor_split_ctx *ctx = ti->private;
     int i;
 
+    pr_info("[%s] Destructor instance clean up invoked\n", DM_MSG_PREFIX);
     for (i = 0; i < ctx->dev_count; i++) {
+        pr_info("[%s] Releasing block device descriptor tracking index %d\n", DM_MSG_PREFIX, i);
         dm_put_device(ti, ctx->devs[i]);
     }
     bioset_exit(&ctx->bio_set);
@@ -216,22 +246,27 @@ static void xor_split_dtr(struct dm_target *ti) {
 }
 
 static struct target_type xor_split_target = {
-    .name    = "xor_split",
+    .name = "xor_split",
     .version = {1, 0, 0},
-    .module  = THIS_MODULE,
-    .ctr     = xor_split_ctr,
-    .dtr     = xor_split_dtr,
-    .map     = xor_split_map,
+    .module = THIS_MODULE,
+    .ctr = xor_split_ctr,
+    .dtr = xor_split_dtr,
+    .map = xor_split_map,
 };
 
 static int __init dm_xor_split_init(void) {
     int r = dm_register_target(&xor_split_target);
-    if (r < 0) DMWARN("Target registration failed: %d", r);
+    if (r < 0) {
+        DMWARN("Target registration failed: %d", r);
+    } else {
+        pr_info("[%s] Custom XOR Multiplex Split Driver registered successfully.\n", DM_MSG_PREFIX);
+    }
     return r;
 }
 
 static void __exit dm_xor_split_exit(void) {
     dm_unregister_target(&xor_split_target);
+    pr_info("[%s] Custom XOR Multiplex Split Driver unregistered cleanly.\n", DM_MSG_PREFIX);
 }
 
 module_init(dm_xor_split_init);
