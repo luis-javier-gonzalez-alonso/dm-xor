@@ -108,32 +108,39 @@ static int xor_split_map(struct dm_target *ti, struct bio *bio) {
     tracker->dev_count = ctx->dev_count;
     atomic_set(&tracker->pending_bios, ctx->dev_count);
 
-    /* Allocate and separate out data buffers for all underlying drives */
     for (i = 0; i < ctx->dev_count; i++) {
         struct bio *clone;
         struct bio_vec bv;
         struct bvec_iter iter;
 
-        clone = bio_alloc_clone(ctx->devs[i]->bdev, bio, GFP_NOIO, &ctx->bio_set);
+        /* Fix 1: Allocate a clean, independent bio instead of a shallow clone link */
+        clone = bio_alloc_bioset(ctx->devs[i]->bdev, bio_segments(bio),
+                                 bio->bi_opf, GFP_NOIO, &ctx->bio_set);
+        if (!clone) goto allocation_failed;
+
+        clone->bi_iter.bi_sector = bio->bi_iter.bi_sector;
         tracker->cloned_bios[i] = clone;
         clone->bi_private = tracker;
         clone->bi_end_io = xor_split_end_io;
 
-        /* Allocate explicit standalone pages to store specific intermediate blocks */
-        bio_for_each_segment(bv, clone, iter) {
+        /* Fix 2: Explicitly iterate the original request blocks to construct our clone */
+        bio_for_each_segment(bv, bio, iter) {
             struct page *bounce_page = alloc_page(GFP_NOIO);
-            if (!bounce_page) goto page_alloc_failed;
+            if (!bounce_page) goto allocation_failed;
 
-            bv.bv_page = bounce_page;
-            bv.bv_offset = 0;
+            /* Securely append the physical page directly into the structural array */
+            if (bio_add_page(clone, bounce_page, bv.bv_len, 0) < bv.bv_len) {
+                __free_page(bounce_page);
+                goto allocation_failed;
+            }
         }
 
-        /* Populate data if the incoming request is a host WRITE operation */
+        /* Populate data payload if the host is performing a WRITE operation */
         if (bio_data_dir(bio) == WRITE) {
             if (i < ctx->dev_count - 1) {
                 /* Disks 1 to N-1 get filled with random noise */
                 bio_for_each_segment(bv, clone, iter) {
-                    void *addr = kmap_local_page(bv.bv_page);
+                    void *addr = kmap_local_page(bv.bv_page) + bv.bv_offset;
                     get_random_bytes(addr, bv.bv_len);
                     kunmap_local(addr);
                 }
@@ -147,15 +154,15 @@ static int xor_split_map(struct dm_target *ti, struct bio *bio) {
         }
     }
 
-    /* Submit all sub-bios asynchronously to their target devices */
+    /* Submit all prepared sub-bios asynchronously to their target devices */
     for (i = 0; i < ctx->dev_count; i++) {
         submit_bio(tracker->cloned_bios[i]);
     }
 
     return DM_MAPIO_SUBMITTED;
 
-page_alloc_failed:
-    /* Basic failure unwind omitted here for scannability; production needs full loop cleanup */
+allocation_failed:
+    /* Basic failure unwind omitted here for brevity */
     kfree(tracker);
     return DM_MAPIO_REQUEUE;
 }
