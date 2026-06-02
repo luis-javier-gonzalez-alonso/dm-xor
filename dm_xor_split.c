@@ -45,8 +45,8 @@ static void xor_bio_buffers(struct bio *dst, struct bio *src) {
             ((u8 *)addr_dst)[i] ^= ((u8 *)addr_src)[i];
         }
 
-        kunmap_local_addr(addr_src);
-        kunmap_local_addr(addr_dst);
+        kunmap_local(addr_src);
+        kunmap_local(addr_dst);
         bio_advance_iter(src, &iter_src, bv_dst.bv_len);
     }
 }
@@ -76,7 +76,7 @@ static void xor_split_end_io(struct bio *clone) {
         /* Clean up all allocated clone allocations and data segments */
         for (i = 0; i < tracker->dev_count; i++) {
             struct bio_vec *bv;
-            struct bvec_iter iter;
+            struct bvec_iter_all iter;
             bio_for_each_segment_all(bv, tracker->cloned_bios[i], iter) {
                 __free_page(bv->bv_page);
             }
@@ -135,7 +135,7 @@ static int xor_split_map(struct dm_target *ti, struct bio *bio) {
                 bio_for_each_segment(bv, clone, iter) {
                     void *addr = kmap_local_page(bv.bv_page);
                     get_random_bytes(addr, bv.bv_len);
-                    kunmap_local_addr(addr);
+                    kunmap_local(addr);
                 }
             } else {
                 /* The Final Disk N accumulates cleartext XORed with every random stream */
@@ -174,7 +174,7 @@ static int xor_split_ctr(struct dm_target *ti, unsigned int argc, char **argv) {
     if (!ctx) return -ENOMEM;
 
     ctx->dev_count = argc;
-    r = bioset_init(&ctx->bio_set, BIO_PREPOOL_SIZE, 0, BIOSET_NEED_BVECS);
+    r = bioset_init(&ctx->bio_set, BIO_POOL_SIZE, 0, BIOSET_NEED_BVECS);
     if (r) goto bad_ctx;
 
     for (i = 0; i < argc; i++) {
