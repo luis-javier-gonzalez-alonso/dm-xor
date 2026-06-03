@@ -22,14 +22,16 @@
  * = 128 * 512 / 4096 * 8 = 128 pages.
  * Pool of 512 pages → 4 fully-concurrent large I/Os without slab pressure.
  */
-#define MIN_POOL_PAGES    512
+#define MIN_POOL_PAGES    1024
 #define XOR_MAX_IO_SECTORS 128   /* 64 KB per bio split */
 
 /* -------------------------------------------------------------------------
  * Module parameters
  * ------------------------------------------------------------------------- */
 static bool verbose = false;
+
 module_param(verbose, bool, 0644);
+
 MODULE_PARM_DESC(verbose, "Log every bio lifecycle (map+end_io+decode). "
                            "Each bio gets a unique ID so hung bios are visible.");
 
@@ -43,16 +45,15 @@ static struct workqueue_struct *xor_decode_wq;
  */
 static atomic_t g_bio_id = ATOMIC_INIT(0);
 
-static const char *xor_op_name(unsigned int op)
-{
+static const char *xor_op_name(unsigned int op) {
     switch (op) {
-    case REQ_OP_READ:         return "READ";
-    case REQ_OP_WRITE:        return "WRITE";
-    case REQ_OP_DISCARD:      return "DISCARD";
-    case REQ_OP_SECURE_ERASE: return "SECURE_ERASE";
-    case REQ_OP_WRITE_ZEROES: return "WRITE_ZEROES";
-    case REQ_OP_FLUSH:        return "FLUSH";
-    default:                  return "UNKNOWN";
+        case REQ_OP_READ: return "READ";
+        case REQ_OP_WRITE: return "WRITE";
+        case REQ_OP_DISCARD: return "DISCARD";
+        case REQ_OP_SECURE_ERASE: return "SECURE_ERASE";
+        case REQ_OP_WRITE_ZEROES: return "WRITE_ZEROES";
+        case REQ_OP_FLUSH: return "FLUSH";
+        default: return "UNKNOWN";
     }
 }
 
@@ -65,23 +66,22 @@ struct xor_split_ctx {
 
 struct xor_io_tracker {
     struct xor_split_ctx *ctx;
-    struct bio           *orig_bio;
-    atomic_t              pending_bios;
-    blk_status_t          bi_status;   /* Fix #1: only via cmpxchg */
-    int                   dev_count;
-    struct bio           *cloned_bios[MAX_SPLIT_DEVICES];
-    struct work_struct    decode_work;
-    bool                  has_bounce_pages;
-    u32                   bio_id;       /* unique ID for log correlation */
+    struct bio *orig_bio;
+    atomic_t pending_bios;
+    blk_status_t bi_status; /* Fix #1: only via cmpxchg */
+    int dev_count;
+    struct bio *cloned_bios[MAX_SPLIT_DEVICES];
+    struct work_struct decode_work;
+    bool has_bounce_pages;
+    u32 bio_id; /* unique ID for log correlation */
 };
 
 static void kernel_random_wrapper(void *buf, size_t nbytes) {
-    get_random_bytes(buf, (int)nbytes);
+    get_random_bytes(buf, (int) nbytes);
 }
 
 /* Shared cleanup: free bounce pages (if any) then release the clone bio */
-static void xor_free_clone(struct xor_io_tracker *tracker, int idx)
-{
+static void xor_free_clone(struct xor_io_tracker *tracker, int idx) {
     struct bio *clone = tracker->cloned_bios[idx];
     if (!clone)
         return;
@@ -98,42 +98,39 @@ static void xor_free_clone(struct xor_io_tracker *tracker, int idx)
 }
 
 /* Fix #4/#5: XOR decode in process context on WQ_MEM_RECLAIM workqueue */
-static void xor_decode_worker(struct work_struct *work)
-{
-    struct xor_io_tracker *tracker =
-        container_of(work, struct xor_io_tracker, decode_work);
+static void xor_decode_worker(struct work_struct *work) {
+    struct
+    xor_io_tracker *tracker =
+            container_of(work, struct xor_io_tracker, decode_work);
     struct bio *orig = tracker->orig_bio;
     int i;
 
     if (verbose)
         pr_info("[%s] bio#%u DECODE start  sector=%llu\n",
                 DM_MSG_PREFIX, tracker->bio_id,
-                (unsigned long long)orig->bi_iter.bi_sector);
+                (unsigned long long) orig->bi_iter.bi_sector);
 
     {
-        struct bio_vec bv_dst;
-        struct bvec_iter iter_dst;
-        int seg_idx = 0;
+        int seg_idx;
 
-        bio_for_each_segment(bv_dst, orig, iter_dst) {
+        for (seg_idx = 0; seg_idx < orig->bi_vcnt; seg_idx++) {
+            struct bio_vec *bv_dst = &orig->bi_io_vec[seg_idx];
             uint8_t *mapped_srcs[MAX_SPLIT_DEVICES];
             void *dst_page_addr =
-                kmap_local_page(bv_dst.bv_page) + bv_dst.bv_offset;
+                    kmap_local_page(bv_dst->bv_page) + bv_dst->bv_offset;
             int disk_idx;
 
             for (disk_idx = 0; disk_idx < tracker->dev_count; disk_idx++) {
                 struct bio *clone_bio = tracker->cloned_bios[disk_idx];
                 struct bio_vec *bv_src = &clone_bio->bi_io_vec[seg_idx];
-                mapped_srcs[disk_idx] = kmap_local_page(bv_src->bv_page);
+                mapped_srcs[disk_idx] = kmap_local_page(bv_src->bv_page) + bv_src->bv_offset;
             }
 
-            xor_split_decode(mapped_srcs, dst_page_addr,
-                             tracker->dev_count, bv_dst.bv_len);
+            xor_split_decode(mapped_srcs, dst_page_addr, tracker->dev_count, bv_dst->bv_len);
 
             for (disk_idx = tracker->dev_count - 1; disk_idx >= 0; disk_idx--)
                 kunmap_local(mapped_srcs[disk_idx]);
             kunmap_local(dst_page_addr);
-            seg_idx++;
         }
     }
 
@@ -143,8 +140,8 @@ static void xor_decode_worker(struct work_struct *work)
     if (verbose)
         pr_info("[%s] bio#%u DECODE done   sector=%llu status=%u → bio_endio\n",
                 DM_MSG_PREFIX, tracker->bio_id,
-                (unsigned long long)orig->bi_iter.bi_sector,
-                (unsigned)tracker->bi_status);
+                (unsigned long long) orig->bi_iter.bi_sector,
+                (unsigned) tracker->bi_status);
 
     orig->bi_status = tracker->bi_status;
     bio_endio(orig);
@@ -166,16 +163,14 @@ static void xor_split_end_io(struct bio *clone) {
     if (verbose)
         pr_info("[%s] bio#%u clone done   sector=%llu status=%u pending=%d\n",
                 DM_MSG_PREFIX, tracker->bio_id,
-                (unsigned long long)orig->bi_iter.bi_sector,
-                (unsigned)clone->bi_status, remaining);
+                (unsigned long long) orig->bi_iter.bi_sector,
+                (unsigned) clone->bi_status, remaining);
 
     if (remaining > 0)
         return;
 
     /* All clones done */
-    if (bio_data_dir(orig) == READ &&
-        tracker->bi_status == BLK_STS_OK &&
-        tracker->has_bounce_pages) {
+    if (bio_data_dir(orig) == READ && tracker->bi_status == BLK_STS_OK && tracker->has_bounce_pages) {
         /* Fix #4/#5: defer XOR decode to private WQ_MEM_RECLAIM workqueue */
         INIT_WORK(&tracker->decode_work, xor_decode_worker);
         queue_work(xor_decode_wq, &tracker->decode_work);
@@ -189,8 +184,8 @@ static void xor_split_end_io(struct bio *clone) {
     if (verbose)
         pr_info("[%s] bio#%u WRITE/MISC done sector=%llu status=%u → bio_endio\n",
                 DM_MSG_PREFIX, tracker->bio_id,
-                (unsigned long long)orig->bi_iter.bi_sector,
-                (unsigned)tracker->bi_status);
+                (unsigned long long) orig->bi_iter.bi_sector,
+                (unsigned) tracker->bi_status);
 
     orig->bi_status = tracker->bi_status;
     bio_endio(orig);
@@ -228,9 +223,9 @@ static int xor_split_map(struct dm_target *ti, struct bio *bio) {
      * ------------------------------------------------------------------ */
     if (bio->bi_opf & REQ_PREFLUSH) {
         if (!bio_sectors(bio)) {
-            needs_bounce = false;   /* pure flush: forward as thin clone */
+            needs_bounce = false; /* pure flush: forward as thin clone */
         } else {
-            bio->bi_opf &= ~REQ_PREFLUSH;  /* flush+data: strip, handle data */
+            bio->bi_opf &= ~REQ_PREFLUSH; /* flush+data: strip, handle data */
             needs_bounce = true;
         }
     } else {
@@ -241,28 +236,28 @@ static int xor_split_map(struct dm_target *ti, struct bio *bio) {
     tracker = kzalloc(sizeof(struct xor_io_tracker), GFP_NOIO);
     if (!tracker) return DM_MAPIO_REQUEUE;
 
-    tracker->ctx              = ctx;
-    tracker->orig_bio         = bio;
-    tracker->bi_status        = BLK_STS_OK;
-    tracker->dev_count        = ctx->dev_count;
+    tracker->ctx = ctx;
+    tracker->orig_bio = bio;
+    tracker->bi_status = BLK_STS_OK;
+    tracker->dev_count = ctx->dev_count;
     tracker->has_bounce_pages = needs_bounce;
-    tracker->bio_id           = (u32)atomic_inc_return(&g_bio_id);
+    tracker->bio_id = (u32) atomic_inc_return(&g_bio_id);
     atomic_set(&tracker->pending_bios, ctx->dev_count);
 
     /* Diagnostic logging ------------------------------------------------ */
     if (verbose) {
         pr_info("[%s] bio#%u MAP  op=%-12s sector=%-10llu size_kb=%-6u segs=%u opf=0x%x bounce=%d\n",
                 DM_MSG_PREFIX, tracker->bio_id, xor_op_name(op),
-                (unsigned long long)bio->bi_iter.bi_sector,
+                (unsigned long long) bio->bi_iter.bi_sector,
                 bio->bi_iter.bi_size >> 10,
                 bio_segments(bio),
                 bio->bi_opf,
-                (int)needs_bounce);
+                (int) needs_bounce);
     } else if (!needs_bounce) {
         /* Always log unusual ops without rate-limiting */
         pr_info("[%s] MAP op=%-12s sector=%-10llu size_kb=%u segs=%u\n",
                 DM_MSG_PREFIX, xor_op_name(op),
-                (unsigned long long)bio->bi_iter.bi_sector,
+                (unsigned long long) bio->bi_iter.bi_sector,
                 bio->bi_iter.bi_size >> 10,
                 bio_segments(bio));
     }
@@ -278,7 +273,7 @@ static int xor_split_map(struct dm_target *ti, struct bio *bio) {
 
         tracker->cloned_bios[i] = clone;
         clone->bi_private = tracker;
-        clone->bi_end_io  = xor_split_end_io;
+        clone->bi_end_io = xor_split_end_io;
 
         if (needs_bounce) {
             struct bio_vec bv;
@@ -288,9 +283,10 @@ static int xor_split_map(struct dm_target *ti, struct bio *bio) {
             clone->bi_iter.bi_sector = bio->bi_iter.bi_sector;
 
             /* Fix #2: bounce pages from mempool, not raw alloc_page */
-            bio_for_each_segment(bv, bio, iter) {
+            bio_for_each_segment(bv, bio, iter)
+            {
                 struct page *bounce_page =
-                    mempool_alloc(&ctx->bounce_pool, GFP_NOIO);
+                        mempool_alloc(&ctx->bounce_pool, GFP_NOIO);
                 if (!bounce_page) goto allocation_failed;
 
                 if (bio_add_page(clone, bounce_page, bv.bv_len, 0) < bv.bv_len) {
@@ -303,7 +299,7 @@ static int xor_split_map(struct dm_target *ti, struct bio *bio) {
         } else {
             /* Thin clone: copy sector + size but no bvec pages */
             clone->bi_iter.bi_sector = bio->bi_iter.bi_sector;
-            clone->bi_iter.bi_size   = bio->bi_iter.bi_size;
+            clone->bi_iter.bi_size = bio->bi_iter.bi_size;
         }
     }
 
@@ -313,7 +309,8 @@ static int xor_split_map(struct dm_target *ti, struct bio *bio) {
         struct bio_vec bv_src;
         struct bvec_iter iter_src;
 
-        bio_for_each_segment(bv_src, bio, iter_src) {
+        bio_for_each_segment(bv_src, bio, iter_src)
+        {
             uint8_t *mapped_addrs[MAX_SPLIT_DEVICES];
             void *src_addr = kmap_local_page(bv_src.bv_page) + bv_src.bv_offset;
             int disk_idx;
@@ -370,14 +367,20 @@ static int xor_split_ctr(struct dm_target *ti, unsigned int argc, char **argv) {
     pr_info("[%s] ctr: calling bioset_init...\n", DM_MSG_PREFIX);
     r = bioset_init(&ctx->bio_set, BIO_POOL_SIZE, 0,
                     BIOSET_NEED_BVECS | BIOSET_NEED_RESCUER);
-    if (r) { ti->error = "Bioset initialization failure"; goto bad_ctx; }
+    if (r) {
+        ti->error = "Bioset initialization failure";
+        goto bad_ctx;
+    }
     pr_info("[%s] ctr: bioset_init OK\n", DM_MSG_PREFIX);
 
     pr_info("[%s] ctr: calling mempool_init_page_pool (min=%d pages = %lu KB)...\n",
             DM_MSG_PREFIX, MIN_POOL_PAGES,
-            (unsigned long)(MIN_POOL_PAGES * PAGE_SIZE / 1024));
+            (unsigned long) (MIN_POOL_PAGES * PAGE_SIZE / 1024));
     r = mempool_init_page_pool(&ctx->bounce_pool, MIN_POOL_PAGES, 0);
-    if (r) { ti->error = "Bounce pool init failure"; goto bad_bioset; }
+    if (r) {
+        ti->error = "Bounce pool init failure";
+        goto bad_bioset;
+    }
     pr_info("[%s] ctr: mempool_init OK\n", DM_MSG_PREFIX);
 
     for (i = 0; i < argc; i++) {
@@ -400,10 +403,10 @@ static int xor_split_ctr(struct dm_target *ti, unsigned int argc, char **argv) {
      * Fix #9 — ti->max_io_len caps bio size; prevents read-ahead from
      * generating bios that need more bounce pages than MIN_POOL_PAGES.
      */
-    ti->num_flush_bios        = 1;
-    ti->num_discard_bios      = 1;
+    ti->num_flush_bios = 1;
+    ti->num_discard_bios = 1;
     ti->num_write_zeroes_bios = 1;
-    ti->max_io_len            = XOR_MAX_IO_SECTORS;
+    ti->max_io_len = XOR_MAX_IO_SECTORS;
 
     ti->private = ctx;
 
@@ -447,12 +450,12 @@ static void xor_split_dtr(struct dm_target *ti) {
 }
 
 static struct target_type xor_split_target = {
-    .name    = "xor_split",
+    .name = "xor_split",
     .version = {1, 0, 0},
-    .module  = THIS_MODULE,
-    .ctr     = xor_split_ctr,
-    .dtr     = xor_split_dtr,
-    .map     = xor_split_map,
+    .module = THIS_MODULE,
+    .ctr = xor_split_ctr,
+    .dtr = xor_split_dtr,
+    .map = xor_split_map,
 };
 
 static int __init dm_xor_split_init(void) {
