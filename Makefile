@@ -8,10 +8,10 @@ dm_xor_split_mod-y := dm_xor_split.o xor_core.o
 KDIR ?= /lib/modules/$(shell uname -r)/build
 
 all:
-	make -C $(KDIR) M=$(PWD) modules
+	$(MAKE) C=1 -C $(KDIR) M=$(CURDIR) modules
 
 clean:
-	make -C $(KDIR) M=$(PWD) clean
+	$(MAKE) -C $(KDIR) M=$(CURDIR) clean
 
 # User-space Test configuration
 test:
