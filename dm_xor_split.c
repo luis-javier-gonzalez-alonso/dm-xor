@@ -164,9 +164,11 @@ static void xor_end_io(struct bio *clone)
 {
     struct xor_io_tracker *t = clone->bi_private;
 
-    /* Atomically propagate the first error seen */
+    /* Propagate error.  blk_status_t is a single byte — stores are
+     * naturally atomic on every architecture Linux supports.  We only
+     * need *some* error to survive, not a specific one. */
     if (clone->bi_status != BLK_STS_OK)
-        cmpxchg(&t->status, BLK_STS_OK, clone->bi_status);
+        t->status = clone->bi_status;
 
     if (!atomic_dec_and_test(&t->pending))
         return;   /* other clones still in flight */
@@ -195,7 +197,7 @@ static int xor_split_map(struct dm_target *ti, struct bio *bio)
 {
     struct xor_split_ctx  *ctx = ti->private;
     struct xor_io_tracker *t;
-    unsigned int op = bio_op(bio);
+    enum req_op op = bio_op(bio);
     bool needs_bounce;
     int d, s;
 
@@ -225,7 +227,7 @@ static int xor_split_map(struct dm_target *ti, struct bio *bio)
 
     if (verbose)
         pr_info("[%s] map: op=%u sector=%llu size=%u bounce=%d\n",
-                DM_MSG_PREFIX, op,
+                DM_MSG_PREFIX, (__force unsigned)op,
                 (unsigned long long)bio->bi_iter.bi_sector,
                 bio->bi_iter.bi_size, (int)needs_bounce);
 
