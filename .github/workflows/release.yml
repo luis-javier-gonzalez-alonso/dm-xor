@@ -53,12 +53,13 @@ jobs:
           # Create source tarball exactly as rpmbuild expects it
           tar --transform "s|^./|dm-xor-${VERSION}/|" --exclude=".git" --exclude="*.tar.gz" -czf ~/rpmbuild/SOURCES/dm-xor-${VERSION}.tar.gz .
           rpmbuild -bb rpm/dm-xor-dkms.spec
+          find ~/rpmbuild/RPMS/ -name "*.rpm" -exec cp {} . \;
           
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: rpm-package
-          path: /root/rpmbuild/RPMS/*/*.rpm
+          path: "*.rpm"
 
   build-arch:
     runs-on: ubuntu-latest
