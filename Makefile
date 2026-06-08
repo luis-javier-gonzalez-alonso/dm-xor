@@ -9,7 +9,7 @@
 #   make dkms-uninstall — remove from DKMS
 
 MODULE_NAME := dm-xor
-MODULE_VERSION := 1.2.0
+MODULE_VERSION := 1.3.5
 
 # The final kernel module output name
 obj-m += dm-xor.o
@@ -50,4 +50,10 @@ dkms-uninstall:
 	dkms remove $(MODULE_NAME)/$(MODULE_VERSION) --all || true
 	rm -rf /usr/src/$(MODULE_NAME)-$(MODULE_VERSION)
 
-.PHONY: all check clean test dkms-install dkms-uninstall
+# ---- Version Bumping helper ----
+
+bump:
+	@./bump-version.sh $(VERSION)
+
+.PHONY: all check clean test dkms-install dkms-uninstall bump
+
