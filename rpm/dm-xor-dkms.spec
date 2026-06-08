@@ -42,5 +42,5 @@ dkms remove  -m dm-xor -v %{version} --all --rpm_safe_upgrade || :
 %{_usrsrc}/dm-xor-%{version}/
 
 %changelog
-* Sun Jun 08 2026 Luis Javier González Alonso <luis.javier.gonzalez.alonso@gmail.com> - 1.2.0-1
+* Sun Jun 08 2026 Luis Javier González Alonso <luis-javier-gonzalez-alonso@users.noreply.github.com> - 1.2.0-1
 - Initial DKMS package for dm-xor kernel module

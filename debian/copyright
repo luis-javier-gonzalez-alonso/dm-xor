@@ -1,10 +1,10 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: dm-xor
-Upstream-Contact: Luis Javier González Alonso <luis.javier.gonzalez.alonso@gmail.com>
+Upstream-Contact: Luis Javier González Alonso <luis-javier-gonzalez-alonso@users.noreply.github.com>
 Source: https://github.com/luis-javier-gonzalez-alonso/dm-xor
 
 Files: *
-Copyright: 2026 Luis Javier González Alonso <luis.javier.gonzalez.alonso@gmail.com>
+Copyright: 2026 Luis Javier González Alonso <luis-javier-gonzalez-alonso@users.noreply.github.com>
 License: GPL-2.0+
 
 License: GPL-2.0+
