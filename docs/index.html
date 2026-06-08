@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>dm-xor Documentation</title>
+    <meta name="description" content="Official documentation for dm-xor: An information-theoretically secure XOR-splitting Device Mapper target for Linux.">
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- Banner Grid Accent -->
+    <div class="glow-accent"></div>
+
+    <!-- Layout Wrapper -->
+    <div class="layout-container">
+        <!-- Sidebar Navigation -->
+        <aside class="sidebar">
+            <div class="sidebar-brand">
+                <span class="logo-icon">⊕</span>
+                <span class="logo-text">dm-xor</span>
+            </div>
+            <nav class="sidebar-nav">
+                <ul>
+                    <li><a href="#intro" class="nav-link active">Introduction</a></li>
+                    <li><a href="#install" class="nav-link">Installation</a></li>
+                    <li><a href="#usage" class="nav-link">Usage Guide</a></li>
+                    <li><a href="#tech" class="nav-link">Technical Design</a></li>
+                </ul>
+            </nav>
+            <div class="sidebar-footer">
+                <span class="version-badge">v1.3.6</span>
+                <span class="license-badge">GPL-2.0+</span>
+            </div>
+        </aside>
+
+        <!-- Main Content Area -->
+        <main class="main-content">
+            <header class="main-header">
+                <h1>dm-xor</h1>
+                <p class="subtitle">Information-Theoretically Secure XOR-Split Device Mapper Target</p>
+                <div class="header-badges">
+                    <img src="https://img.shields.io/badge/Linux-Kernel_Module-blue?logo=linux&logoColor=white" alt="Linux Kernel Module">
+                    <img src="https://img.shields.io/badge/DKMS-Supported-green" alt="DKMS Supported">
+                    <img src="https://img.shields.io/badge/License-GPL--2.0%2B-lightgrey" alt="License GPL-2.0+">
+                </div>
+            </header>
+
+            <!-- Introduction Section -->
+            <section id="intro" class="section-card">
+                <h2>Introduction</h2>
+                <p>
+                    <strong>dm-xor</strong> is a stable, high-security Linux Device Mapper target that splits data streams on-the-fly across 2 to 8 physical blocks or virtual drives using an information-theoretically secure XOR-splitting secret sharing scheme.
+                </p>
+                <p>
+                    Unlike traditional RAID mirroring, which replicates data identically on all disks, <code>dm-xor</code> generates independent random noise blocks on all disks except the final disk, which stores the cumulative XOR product. 
+                </p>
+                <div class="info-alert">
+                    <strong>Why use dm-xor?</strong> If an attacker steals $N-1$ of your disks, they gain absolutely zero information about your files. Reconstructing even a single bit of data is mathematically impossible without access to all $N$ disks.
+                </div>
+                <h3>Key Features</h3>
+                <div class="features-grid">
+                    <div class="feature-card">
+                        <h4>🔒 Absolute Security</h4>
+                        <p>Protects data against physical disk theft. If any single drive is missing, the remaining set is indistinguishable from random noise.</p>
+                    </div>
+                    <div class="feature-card">
+                        <h4>⚡ Non-blocking Workqueue</h4>
+                        <p>Write/encode operations are offloaded to an unbound, concurrent workqueue to prevent blocking the application thread.</p>
+                    </div>
+                    <div class="feature-card">
+                        <h4>📦 Multi-Distro Support</h4>
+                        <p>Includes native packaging scripts and automated pipelines for Debian, RHEL/Fedora, and Arch Linux.</p>
+                    </div>
+                    <div class="feature-card">
+                        <h4>🛠️ Built-in DKMS Integration</h4>
+                        <p>Automatically rebuilds the kernel module whenever you update your system's Linux kernel.</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Installation Section -->
+            <section id="install" class="section-card">
+                <h2>Installation</h2>
+                <p>Select your installation method or distribution format using the tabs below:</p>
+
+                <!-- Tab Headers -->
+                <div class="tabs-header">
+                    <button class="tab-btn active" onclick="switchTab(event, 'deb-tab')">Debian / Ubuntu</button>
+                    <button class="tab-btn" onclick="switchTab(event, 'rpm-tab')">RHEL / Fedora</button>
+                    <button class="tab-btn" onclick="switchTab(event, 'arch-tab')">Arch Linux</button>
+                    <button class="tab-btn" onclick="switchTab(event, 'dkms-tab')">Manual DKMS</button>
+                </div>
+
+                <!-- Tab Contents -->
+                <div class="tabs-container">
+                    <!-- Debian Tab -->
+                    <div id="deb-tab" class="tab-content active">
+                        <h4>Install pre-built Debian Package</h4>
+                        <p>Download the <code>.deb</code> package from GitHub Releases and install it using <code>apt</code> or <code>dpkg</code>:</p>
+                        <div class="code-block-wrapper">
+                            <pre><code class="lang-bash"># Install dependencies
+sudo apt update
+sudo apt install dkms dh-dkms linux-headers-generic
+
+# Install the package
+sudo dpkg -i dm-xor-dkms_1.3.6-1_all.deb</code></pre>
+                            <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+                        </div>
+                    </div>
+
+                    <!-- RPM Tab -->
+                    <div id="rpm-tab" class="tab-content">
+                        <h4>Install pre-built RPM Package</h4>
+                        <p>Download the <code>.rpm</code> package from GitHub Releases and install it using <code>dnf</code> or <code>rpm</code>:</p>
+                        <div class="code-block-wrapper">
+                            <pre><code class="lang-bash"># Install dependencies and spec
+sudo dnf install dkms kernel-devel
+
+# Install the module package
+sudo rpm -i dm-xor-dkms-1.3.6-1.noarch.rpm</code></pre>
+                            <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+                        </div>
+                    </div>
+
+                    <!-- Arch Tab -->
+                    <div id="arch-tab" class="tab-content">
+                        <h4>Install Arch Package</h4>
+                        <p>Download the Arch package from GitHub Releases and install it using <code>pacman</code>:</p>
+                        <div class="code-block-wrapper">
+                            <pre><code class="lang-bash"># Install dependencies and package
+sudo pacman -Syu dkms linux-headers
+sudo pacman -U dm-xor-dkms-1.3.6-1-any.pkg.tar.zst</code></pre>
+                            <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+                        </div>
+                    </div>
+
+                    <!-- DKMS Tab -->
+                    <div id="dkms-tab" class="tab-content">
+                        <h4>Source Build via DKMS (Cross-distro)</h4>
+                        <p>If your distribution is not listed above, compile and register the module from source using the Makefile helper:</p>
+                        <div class="code-block-wrapper">
+                            <pre><code class="lang-bash"># Clone repository
+git clone https://github.com/luis-javier-gonzalez-alonso/dm-xor.git
+cd dm-xor
+
+# Install via DKMS
+sudo make dkms-install</code></pre>
+                            <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Usage Section -->
+            <section id="usage" class="section-card">
+                <h2>Usage Guide</h2>
+                <p>Follow this step-by-step walkthrough to set up a secure virtual drive using <code>dm-xor</code>.</p>
+
+                <h3>1. Create Virtual Backing Disks (For Testing)</h3>
+                <p>If you don't have empty physical disks, you can simulate them using loopback files:</p>
+                <div class="code-block-wrapper">
+                    <pre><code class="lang-bash"># Create 3 empty files of 100MB each
+dd if=/dev/zero of=/tmp/disk1.img bs=1M count=100
+dd if=/dev/zero of=/tmp/disk2.img bs=1M count=100
+dd if=/dev/zero of=/tmp/disk3.img bs=1M count=100
+
+# Associate files with loopback devices
+sudo losetup /dev/loop10 /tmp/disk1.img
+sudo losetup /dev/loop11 /tmp/disk2.img
+sudo losetup /dev/loop12 /tmp/disk3.img</code></pre>
+                    <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+                </div>
+
+                <h3>2. Construct the Target Type Table</h3>
+                <p>The target parameter format is:</p>
+                <div class="code-block-wrapper">
+                    <pre><code class="lang-text">0 &lt;size_in_sectors&gt; xor &lt;backing_device_1&gt; &lt;backing_device_2&gt; ... &lt;backing_device_N&gt;</code></pre>
+                    <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+                </div>
+                <p>Calculate the sector size of the loopback drives (100MB = 204800 sectors) and load the module:</p>
+                <div class="code-block-wrapper">
+                    <pre><code class="lang-bash"># Load kernel module
+sudo modprobe dm-xor
+
+# Create the virtual mapped drive
+echo "0 204800 xor /dev/loop10 /dev/loop11 /dev/loop12" | sudo dmsetup create secure-xor</code></pre>
+                    <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+                </div>
+
+                <h3>3. Format and Mount the Drive</h3>
+                <p>The new device is available at <code>/dev/mapper/secure-xor</code>. Treat it like any regular hard drive:</p>
+                <div class="code-block-wrapper">
+                    <pre><code class="lang-bash"># Format with EXT4 filesystem
+sudo mkfs.ext4 /dev/mapper/secure-xor
+
+# Mount it
+sudo mkdir -p /mnt/secure_data
+sudo mount /dev/mapper/secure-xor /mnt/secure_data
+
+# Create a test file
+echo "Confidential Data" | sudo tee /mnt/secure_data/secrets.txt</code></pre>
+                    <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+                </div>
+
+                <h3>4. Verify Security</h3>
+                <p>Unmount and remove the target to sync data to backing files, and inspect the individual files. You'll notice they look like random static garbage:</p>
+                <div class="code-block-wrapper">
+                    <pre><code class="lang-bash"># Unmount and clean up target
+sudo umount /mnt/secure_data
+sudo dmsetup remove secure-xor
+
+# View the raw contents of disk1 (random noise)
+hexdump -C /tmp/disk1.img | head -n 10</code></pre>
+                    <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+                </div>
+            </section>
+
+            <!-- Technical Details Section -->
+            <section id="tech" class="section-card">
+                <h2>Technical Design</h2>
+                
+                <h3>Secret Sharing Mathematics</h3>
+                <p>
+                    Let $D_i$ be the $i$-th backing device (where $0 \le i < N$, and $N$ is the total device count).
+                    When writing a data block $S$ to the virtual device, the encoding routine computes:
+                </p>
+                <div class="math-box">
+                    <p>$$D_i = \text{random\_noise} \quad \text{for } 0 \le i < N-1$$</p>
+                    <p>$$D_{N-1} = S \oplus D_0 \oplus D_1 \oplus \dots \oplus D_{N-2}$$</p>
+                </div>
+                <p>
+                    When reading, the data block $S$ is recovered instantaneously by XORing all segments together:
+                </p>
+                <div class="math-box">
+                    <p>$$S = D_0 \oplus D_1 \oplus \dots \oplus D_{N-1}$$</p>
+                </div>
+
+                <h3>Unbound Workqueue Pipeline</h3>
+                <p>
+                    Performing XOR operations and invoking random generation blocks on high-bandwidth read/write pipelines can consume significant CPU cycles. If run on the block layer mapping threads, it blocks caller applications.
+                </p>
+                <p>
+                    To solve this, <code>dm-xor</code> offloads computational processes to a custom dedicated Linux workqueue (<code>dm_xor</code>):
+                </p>
+                <ul>
+                    <li><strong>Write encoding</strong>: When a write <code>bio</code> arrives in <code>xor_map()</code>, bounce pages are allocated, clone <code>bio</code>s are configured, and the encryption task is queued to the workqueue. The block layer caller thread returns immediately with <code>DM_MAPIO_SUBMITTED</code>.</li>
+                    <li><strong>Read decoding</strong>: When read clones complete in <code>xor_end_io()</code>, decoding requires kernel virtual address local page mappings (<code>kmap_local_page</code>). The callback schedules the decode task onto the workqueue, freeing the block layer softirq context.</li>
+                </ul>
+
+                <h3>Zero Post-Map State Reliance</h3>
+                <p>
+                    A common source of instability in custom Device Mapper modules is relying on bio iterator structures that change asynchronously during request lifecycles.
+                </p>
+                <p>
+                    <code>dm-xor</code> takes a snapshot of all segment lengths, offsets, and page pointers into direct arrays inside a local tracker object (<code>struct xor_io_tracker</code>) at the moment of entry. All operations (encode, clone submission, decode, and page frees) iterate this static snapshot, eliminating concurrency and race hazards.
+                </p>
+
+                <h3>Suspend & Resume</h3>
+                <p>
+                    Unlike block devices that implement complex suspend state machines, <code>dm-xor</code> leverages the Linux Device Mapper framework's built-in target suspend infrastructure. During table suspension, the block layer blocks incoming requests and automatically flushes the workqueue and waits for all in-flight <code>bio</code> clones to complete. This ensures data consistency without adding custom state overhead to the driver code.
+                </p>
+            </section>
+        </main>
+    </div>
+
+    <!-- MathJax for rendering equations -->
+    <script>
+        window.MathJax = {
+            tex: {
+                inlineMath: [['$', '$'], ['\\(', '\\)']],
+                displayMath: [['$$', '$$'], ['\\[', '\\]']]
+            }
+        };
+    </script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
