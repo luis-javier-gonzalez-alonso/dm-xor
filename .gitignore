@@ -1,1 +1,28 @@
-.idea
+# IDE
+.idea/
+
+# Kernel build artifacts
+*.o
+*.ko
+*.ko.gz
+*.ko.xz
+*.ko.zst
+*.mod
+*.mod.c
+*.mod.o
+*.order
+*.symvers
+*.cmd
+.*.cmd
+.tmp_versions/
+Module.symvers
+modules.order
+.module-common.o
+
+# User-space test binary
+test_xor
+
+# Packaging outputs
+*.deb
+*.rpm
+*.pkg.tar.*
