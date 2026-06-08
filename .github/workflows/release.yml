@@ -1,0 +1,125 @@
+name: Release Packages
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  build-deb:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y debhelper dkms build-essential
+      
+      - name: Bump version
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          sed -i "s/^MODULE_VERSION := .*/MODULE_VERSION := ${VERSION}/" Makefile
+          sed -i "s/(.*-1)/(${VERSION}-1)/" debian/changelog
+          
+      - name: Build Debian Package
+        run: dpkg-buildpackage -us -uc -b
+        
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: deb-package
+          path: ../*.deb
+
+  build-rpm:
+    runs-on: ubuntu-latest
+    container: fedora:latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install dependencies
+        run: dnf install -y rpm-build rpmdevtools gcc make tar
+        
+      - name: Bump version
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          sed -i "s/^MODULE_VERSION := .*/MODULE_VERSION := ${VERSION}/" Makefile
+          sed -i "s/^Version:.*/Version:        ${VERSION}/" rpm/dm-xor-dkms.spec
+          
+      - name: Build RPM
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          mkdir -p ~/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
+          # Create source tarball exactly as rpmbuild expects it
+          tar --transform "s|^./|dm-xor-${VERSION}/|" --exclude=".git" --exclude="*.tar.gz" -czf ~/rpmbuild/SOURCES/dm-xor-${VERSION}.tar.gz .
+          rpmbuild -bb rpm/dm-xor-dkms.spec
+          
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rpm-package
+          path: /root/rpmbuild/RPMS/*/*.rpm
+
+  build-arch:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: Install dependencies
+        run: pacman -Syu --noconfirm base-devel git sudo tar
+        
+      - name: Create build user
+        run: |
+          # Arch makepkg refuses to run as root
+          useradd -m builder
+          echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+          
+      - uses: actions/checkout@v4
+        with:
+          path: source
+          
+      - name: Fix ownership
+        run: chown -R builder:builder source
+        
+      - name: Build Arch Package
+        run: |
+          su builder -c '
+            cd source
+            VERSION=${GITHUB_REF_NAME#v}
+            # Update versions
+            sed -i "s/^pkgver=.*/pkgver=${VERSION}/" arch/PKGBUILD
+            sed -i "s/^MODULE_VERSION := .*/MODULE_VERSION := ${VERSION}/" Makefile
+            
+            # Create local tarball so makepkg has something to extract (since github release tarball doesnt exist yet)
+            tar --transform "s|^./|dm-xor-${VERSION}/|" --exclude=".git" --exclude="*.tar.gz" -czf dm-xor-${VERSION}.tar.gz .
+            
+            # Point PKGBUILD to the local tarball and update checksums
+            sed -i "s|source=.*|source=(\"dm-xor-${VERSION}.tar.gz\")|g" arch/PKGBUILD
+            
+            cd arch
+            # Link tarball to where makepkg will look for it
+            ln -s ../dm-xor-${VERSION}.tar.gz .
+            updpkgsums
+            makepkg -s --noconfirm
+          '
+          
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: arch-package
+          path: source/arch/*.pkg.tar.zst
+
+  publish:
+    needs: [build-deb, build-rpm, build-arch]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: packages
+          merge-multiple: true
+          
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: packages/*
+          generate_release_notes: true
