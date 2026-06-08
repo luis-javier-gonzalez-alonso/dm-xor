@@ -1,6 +1,6 @@
 #include "xor_core.h"
 
-void xor_split_encode(const uint8_t *src, uint8_t **dest_buffers, int num_devices, size_t length,
+void xor_encode(const uint8_t *src, uint8_t **dest_buffers, int num_devices, size_t length,
                       random_bytes_cb rand_fn) {
     int last_disk = num_devices - 1;
     size_t b;
@@ -21,7 +21,7 @@ void xor_split_encode(const uint8_t *src, uint8_t **dest_buffers, int num_device
     }
 }
 
-void xor_split_decode(uint8_t **src_buffers, uint8_t *dest, int num_devices, size_t length) {
+void xor_decode(uint8_t **src_buffers, uint8_t *dest, int num_devices, size_t length) {
     size_t b;
     int i;
 

@@ -11,5 +11,7 @@ override_dh_auto_test:
 
 override_dh_auto_install:
 
+VERSION := $(shell dpkg-parsechangelog -S Version | cut -d- -f1)
+
 override_dh_dkms:
-	dh_dkms -V 1.2.0
+	dh_dkms -V $(VERSION)

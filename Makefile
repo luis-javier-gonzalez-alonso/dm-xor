@@ -12,10 +12,10 @@ MODULE_NAME := dm-xor
 MODULE_VERSION := 1.2.0
 
 # The final kernel module output name
-obj-m += dm_xor_split_mod.o
+obj-m += dm-xor.o
 
 # Tell kbuild which object files compose the final module
-dm_xor_split_mod-y := dm_xor_split.o xor_core.o
+dm-xor-y := dm_xor.o xor_core.o
 
 # Points to the kernel headers for the running kernel
 KDIR ?= /lib/modules/$(shell uname -r)/build

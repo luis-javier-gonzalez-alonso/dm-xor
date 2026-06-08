@@ -24,7 +24,7 @@ and integrates with DKMS so the module is automatically built for each kernel.
 
 %install
 install -d %{buildroot}%{_usrsrc}/dm-xor-%{version}/
-install -m 0644 dm_xor_split.c  %{buildroot}%{_usrsrc}/dm-xor-%{version}/
+install -m 0644 dm_xor.c  %{buildroot}%{_usrsrc}/dm-xor-%{version}/
 install -m 0644 xor_core.c      %{buildroot}%{_usrsrc}/dm-xor-%{version}/
 install -m 0644 xor_core.h      %{buildroot}%{_usrsrc}/dm-xor-%{version}/
 install -m 0644 Makefile         %{buildroot}%{_usrsrc}/dm-xor-%{version}/

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0+
 
 /*
- * dm_xor_split.c — Device-mapper target that XOR-splits data across N disks.
+ * dm_xor.c — Device-mapper target that XOR-splits data across N disks.
  *
  * DESIGN GOALS:
  *   1. Correctness above all — no performance tricks.
@@ -24,7 +24,7 @@
 
 #include "xor_core.h"
 
-#define DM_MSG_PREFIX      "dm_xor_split"
+#define DM_MSG_PREFIX      "dm_xor"
 #define MAX_SPLIT_DEVICES  8
 
 /*
@@ -56,7 +56,7 @@ MODULE_PARM_DESC(verbose, "Log every map() call to dmesg");
 /* Per-DM-table context                                                */
 /* ------------------------------------------------------------------ */
 
-struct xor_split_ctx {
+struct xor_ctx {
 	int dev_count;
 	struct dm_dev *devs[MAX_SPLIT_DEVICES];
 	struct bio_set bio_set;
@@ -77,7 +77,7 @@ struct saved_seg {
 };
 
 struct xor_io_tracker {
-	struct xor_split_ctx *ctx;
+	struct xor_ctx *ctx;
 	struct bio *orig_bio;
 	atomic_t pending;
 	blk_status_t status;
@@ -151,7 +151,7 @@ static void xor_write_worker(struct work_struct *work)
 		for (d = 0; d < t->dev_count; d++)
 			dst_bufs[d] = kmap_local_page(t->bounce[d][s]);
 
-		xor_split_encode(src, dst_bufs, t->dev_count,
+		xor_encode(src, dst_bufs, t->dev_count,
 				 t->segs[s].len, kernel_random_wrapper);
 
 		for (d = t->dev_count - 1; d >= 0; d--)
@@ -182,7 +182,7 @@ static void xor_read_worker(struct work_struct *work)
 		for (d = 0; d < t->dev_count; d++)
 			src_bufs[d] = kmap_local_page(t->bounce[d][s]);
 
-		xor_split_decode(src_bufs, dst, t->dev_count, t->segs[s].len);
+		xor_decode(src_bufs, dst, t->dev_count, t->segs[s].len);
 
 		/* kunmap_local must be called in reverse (LIFO) order */
 		for (d = t->dev_count - 1; d >= 0; d--)
@@ -233,9 +233,9 @@ static void xor_end_io(struct bio *clone)
 /* Map                                                                 */
 /* ------------------------------------------------------------------ */
 
-static int xor_split_map(struct dm_target *ti, struct bio *bio)
+static int xor_map(struct dm_target *ti, struct bio *bio)
 {
-	struct xor_split_ctx *ctx = ti->private;
+	struct xor_ctx *ctx = ti->private;
 	struct xor_io_tracker *t;
 	enum req_op op = bio_op(bio);
 	bool needs_bounce;
@@ -368,9 +368,9 @@ fail:
 /* Constructor                                                         */
 /* ------------------------------------------------------------------ */
 
-static int xor_split_ctr(struct dm_target *ti, unsigned int argc, char **argv)
+static int xor_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 {
-	struct xor_split_ctx *ctx;
+	struct xor_ctx *ctx;
 	int i, r;
 
 	if (argc < 2 || argc > MAX_SPLIT_DEVICES) {
@@ -432,11 +432,11 @@ bad_ctx:
 /* Status — supports dmsetup status / dmsetup table                    */
 /* ------------------------------------------------------------------ */
 
-static void xor_split_status(struct dm_target *ti, status_type_t type,
+static void xor_status(struct dm_target *ti, status_type_t type,
 			     unsigned int status_flags, char *result,
 			     unsigned int maxlen)
 {
-	struct xor_split_ctx *ctx = ti->private;
+	struct xor_ctx *ctx = ti->private;
 	unsigned int sz = 0;
 	int i;
 
@@ -458,10 +458,10 @@ static void xor_split_status(struct dm_target *ti, status_type_t type,
 /* Iterate devices — lets DM merge queue limits from backing devices   */
 /* ------------------------------------------------------------------ */
 
-static int xor_split_iterate_devices(struct dm_target *ti,
+static int xor_iterate_devices(struct dm_target *ti,
 				     iterate_devices_callout_fn fn, void *data)
 {
-	struct xor_split_ctx *ctx = ti->private;
+	struct xor_ctx *ctx = ti->private;
 	int ret = 0;
 	int i;
 
@@ -478,9 +478,9 @@ static int xor_split_iterate_devices(struct dm_target *ti,
 /* Destructor                                                          */
 /* ------------------------------------------------------------------ */
 
-static void xor_split_dtr(struct dm_target *ti)
+static void xor_dtr(struct dm_target *ti)
 {
-	struct xor_split_ctx *ctx = ti->private;
+	struct xor_ctx *ctx = ti->private;
 	int i;
 
 	drain_workqueue(xor_wq);
@@ -497,18 +497,18 @@ static void xor_split_dtr(struct dm_target *ti)
 /* Module plumbing                                                     */
 /* ------------------------------------------------------------------ */
 
-static struct target_type xor_split_target = {
-	.name            = "xor_split",
+static struct target_type xor_target = {
+	.name            = "xor",
 	.version         = { 1, 2, 0 },
 	.module          = THIS_MODULE,
-	.ctr             = xor_split_ctr,
-	.dtr             = xor_split_dtr,
-	.map             = xor_split_map,
-	.status          = xor_split_status,
-	.iterate_devices = xor_split_iterate_devices,
+	.ctr             = xor_ctr,
+	.dtr             = xor_dtr,
+	.map             = xor_map,
+	.status          = xor_status,
+	.iterate_devices = xor_iterate_devices,
 };
 
-static int __init dm_xor_split_init(void)
+static int __init dm_xor_init(void)
 {
 	int r;
 
@@ -517,7 +517,7 @@ static int __init dm_xor_split_init(void)
 	if (!xor_wq)
 		return -ENOMEM;
 
-	r = dm_register_target(&xor_split_target);
+	r = dm_register_target(&xor_target);
 	if (r < 0) {
 		destroy_workqueue(xor_wq);
 		return r;
@@ -527,15 +527,16 @@ static int __init dm_xor_split_init(void)
 	return 0;
 }
 
-static void __exit dm_xor_split_exit(void)
+static void __exit dm_xor_exit(void)
 {
-	dm_unregister_target(&xor_split_target);
+	dm_unregister_target(&xor_target);
 	destroy_workqueue(xor_wq);
 	pr_info("[%s] unloaded\n", DM_MSG_PREFIX);
 }
 
-module_init(dm_xor_split_init);
-module_exit(dm_xor_split_exit);
+module_init(dm_xor_init);
+module_exit(dm_xor_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Multi-disk XOR split device mapper");
+MODULE_ALIAS("dm-xor");
