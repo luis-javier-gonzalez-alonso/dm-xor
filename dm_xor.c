@@ -151,8 +151,8 @@ static void xor_write_worker(struct work_struct *work)
 		for (d = 0; d < t->dev_count; d++)
 			dst_bufs[d] = kmap_local_page(t->bounce[d][s]);
 
-		xor_encode(src, dst_bufs, t->dev_count,
-				 t->segs[s].len, kernel_random_wrapper);
+		xor_encode(src, dst_bufs, t->dev_count, t->segs[s].len,
+				   kernel_random_wrapper);
 
 		for (d = t->dev_count - 1; d >= 0; d--)
 			kunmap_local(dst_bufs[d]);
@@ -433,8 +433,8 @@ bad_ctx:
 /* ------------------------------------------------------------------ */
 
 static void xor_status(struct dm_target *ti, status_type_t type,
-			     unsigned int status_flags, char *result,
-			     unsigned int maxlen)
+					   unsigned int status_flags, char *result,
+					   unsigned int maxlen)
 {
 	struct xor_ctx *ctx = ti->private;
 	unsigned int sz = 0;
@@ -459,7 +459,7 @@ static void xor_status(struct dm_target *ti, status_type_t type,
 /* ------------------------------------------------------------------ */
 
 static int xor_iterate_devices(struct dm_target *ti,
-				     iterate_devices_callout_fn fn, void *data)
+							   iterate_devices_callout_fn fn, void *data)
 {
 	struct xor_ctx *ctx = ti->private;
 	int ret = 0;

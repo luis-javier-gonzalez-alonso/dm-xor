@@ -44,7 +44,7 @@ static void test_garbage_and_isolation() {
     uint8_t *disk_buffers[MAX_DEVICES];
 
     allocate_buffers(disk_buffers, num_devices, len);
-    xor_split_encode(src, disk_buffers, num_devices, len, mock_random_bytes);
+    xor_encode(src, disk_buffers, num_devices, len, mock_random_bytes);
 
     /* Verify data is "garbage" on every individual stream */
     for (int i = 0; i < num_devices; i++) {
@@ -70,13 +70,13 @@ static void test_idempotency() {
     allocate_buffers(disk_buffers, num_devices, len);
 
     /* Write Phase */
-    xor_split_encode(src, disk_buffers, num_devices, len, mock_random_bytes);
+    xor_encode(src, disk_buffers, num_devices, len, mock_random_bytes);
 
     /* Read Phase 1 */
-    xor_split_decode(disk_buffers, dest1, num_devices, len);
+    xor_decode(disk_buffers, dest1, num_devices, len);
 
     /* Read Phase 2 (Idempotent operation on the same disk buffers) */
-    xor_split_decode(disk_buffers, dest2, num_devices, len);
+    xor_decode(disk_buffers, dest2, num_devices, len);
 
     /* Verify both reads are identical to the source and to each other */
     assert(memcmp(src, dest1, len) == 0);
@@ -85,7 +85,7 @@ static void test_idempotency() {
 
     /* Verify the source disks were NOT mutated during the decode phase */
     uint8_t dest3[32] = {0};
-    xor_split_decode(disk_buffers, dest3, num_devices, len);
+    xor_decode(disk_buffers, dest3, num_devices, len);
     assert(memcmp(dest1, dest3, len) == 0);
 
     free_buffers(disk_buffers, num_devices);
@@ -101,8 +101,8 @@ static void test_minimum_devices() {
 
     allocate_buffers(disk_buffers, num_devices, len);
 
-    xor_split_encode(src, disk_buffers, num_devices, len, mock_random_bytes);
-    xor_split_decode(disk_buffers, dest, num_devices, len);
+    xor_encode(src, disk_buffers, num_devices, len, mock_random_bytes);
+    xor_decode(disk_buffers, dest, num_devices, len);
 
     assert(memcmp(src, dest, len) == 0);
 
@@ -119,8 +119,8 @@ static void test_unaligned_lengths() {
 
     allocate_buffers(disk_buffers, num_devices, len);
 
-    xor_split_encode(src, disk_buffers, num_devices, len, mock_random_bytes);
-    xor_split_decode(disk_buffers, dest, num_devices, len);
+    xor_encode(src, disk_buffers, num_devices, len, mock_random_bytes);
+    xor_decode(disk_buffers, dest, num_devices, len);
 
     assert(memcmp(src, dest, len) == 0);
 
@@ -138,8 +138,8 @@ static void test_zero_length() {
     allocate_buffers(disk_buffers, num_devices, len);
 
     /* Should not crash, infinite loop, or write anything */
-    xor_split_encode(src, disk_buffers, num_devices, len, mock_random_bytes);
-    xor_split_decode(disk_buffers, dest, num_devices, len);
+    xor_encode(src, disk_buffers, num_devices, len, mock_random_bytes);
+    xor_decode(disk_buffers, dest, num_devices, len);
 
     /* Dest should remain untouched */
     assert(dest[0] == 0x00);
@@ -157,12 +157,12 @@ static void test_data_corruption() {
 
     allocate_buffers(disk_buffers, num_devices, len);
 
-    xor_split_encode(src, disk_buffers, num_devices, len, mock_random_bytes);
+    xor_encode(src, disk_buffers, num_devices, len, mock_random_bytes);
 
     /* Simulate silent bit-rot / sector corruption on Disk 1 */
     disk_buffers[1][5] ^= 0xFF;
 
-    xor_split_decode(disk_buffers, dest, num_devices, len);
+    xor_decode(disk_buffers, dest, num_devices, len);
 
     /* The decode MUST fail to match the source because XOR splits lack parity/FEC */
     assert(memcmp(src, dest, len) != 0);
