@@ -9,7 +9,7 @@
 #   make dkms-uninstall — remove from DKMS
 
 MODULE_NAME := dm-xor
-MODULE_VERSION := 1.3.5
+MODULE_VERSION := 1.3.6
 
 # The final kernel module output name
 obj-m += dm-xor.o

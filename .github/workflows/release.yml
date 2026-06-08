@@ -17,10 +17,8 @@ jobs:
       - name: Bump version
         run: |
           VERSION=${GITHUB_REF_NAME#v}
-          sed -i "s/^MODULE_VERSION := .*/MODULE_VERSION := ${VERSION}/" Makefile
-          sed -i "s/(.*-1)/(${VERSION}-1)/" debian/changelog
-          sed -i "s/dm-xor-[0-9.]*/dm-xor-${VERSION}/g" debian/dm-xor-dkms.install
-          sed -i "s/^PACKAGE_VERSION=.*/PACKAGE_VERSION=\"${VERSION}\"/" dkms.conf
+          chmod +x bump-version.sh
+          ./bump-version.sh ${VERSION}
           
       - name: Build Debian Package
         run: |
@@ -45,9 +43,8 @@ jobs:
       - name: Bump version
         run: |
           VERSION=${GITHUB_REF_NAME#v}
-          sed -i "s/^MODULE_VERSION := .*/MODULE_VERSION := ${VERSION}/" Makefile
-          sed -i "s/^Version:.*/Version:        ${VERSION}/" rpm/dm-xor-dkms.spec
-          sed -i "s/^PACKAGE_VERSION=.*/PACKAGE_VERSION=\"${VERSION}\"/" dkms.conf
+          chmod +x bump-version.sh
+          ./bump-version.sh ${VERSION}
           
       - name: Build RPM
         run: |
@@ -81,8 +78,10 @@ jobs:
         with:
           path: source
           
-      - name: Fix ownership
-        run: chown -R builder:builder source
+      - name: Fix ownership and permissions
+        run: |
+          chmod +x source/bump-version.sh
+          chown -R builder:builder source
         
       - name: Build Arch Package
         run: |
@@ -90,9 +89,7 @@ jobs:
             cd source
             VERSION=${GITHUB_REF_NAME#v}
             # Update versions
-            sed -i "s/^pkgver=.*/pkgver=${VERSION}/" arch/PKGBUILD
-            sed -i "s/^MODULE_VERSION := .*/MODULE_VERSION := ${VERSION}/" Makefile
-            sed -i "s/^PACKAGE_VERSION=.*/PACKAGE_VERSION=\"\${VERSION}\"/" dkms.conf
+            ./bump-version.sh ${VERSION}
             
             # Create local tarball so makepkg has something to extract (since github release tarball doesnt exist yet)
             tar --transform "s|^./|dm-xor-${VERSION}/|" --exclude=".git" --exclude="*.tar.gz" -czf dm-xor-${VERSION}.tar.gz .
