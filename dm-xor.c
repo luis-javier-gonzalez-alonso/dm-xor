@@ -328,11 +328,13 @@ static int xor_map(struct dm_target *ti, struct bio *bio)
 	gfp_t gfp = GFP_NOIO;
 	int d, s;
 
+	unsigned int clone_opf = bio->bi_opf;
+
 	if (bio->bi_opf & REQ_PREFLUSH) {
 		if (!bio_sectors(bio)) {
 			needs_bounce = false;
 		} else {
-			bio->bi_opf &= ~REQ_PREFLUSH;
+			clone_opf &= ~REQ_PREFLUSH;
 			needs_bounce = true;
 		}
 	} else {
@@ -394,7 +396,7 @@ static int xor_map(struct dm_target *ti, struct bio *bio)
 		int nr_vecs = needs_bounce ? t->n_segs : 0;
 
 		clone = bio_alloc_bioset(ctx->devs[d]->bdev, nr_vecs,
-					 bio->bi_opf, GFP_NOIO, &ctx->bio_set);
+					 clone_opf, GFP_NOIO, &ctx->bio_set);
 		if (!clone)
 			goto fail;
 
@@ -583,7 +585,7 @@ static void xor_dtr(struct dm_target *ti)
 
 static struct target_type xor_target = {
 	.name            = "xor",
-	.version         = { 2, 1, 1 },
+	.version         = { 2, 0, 0 },
 	.module          = THIS_MODULE,
 	.ctr             = xor_ctr,
 	.dtr             = xor_dtr,
