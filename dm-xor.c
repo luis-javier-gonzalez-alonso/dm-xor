@@ -32,14 +32,14 @@
 #include <crypto/algapi.h>
 #include <linux/scatterlist.h>
 
-#define DM_MSG_PREFIX      "dm_xor"
-#define MAX_SPLIT_DEVICES  8
+#define DM_MSG_PREFIX "dm_xor"
+#define MAX_SPLIT_DEVICES 8
 
 /*
  * Bioset pool size. Must be >= MAX_SPLIT_DEVICES so a single map() call
  * can allocate all clone bios from the emergency pool without deadlocking.
  */
-#define XOR_BIO_POOL_SIZE  (MAX_SPLIT_DEVICES * 4)
+#define XOR_BIO_POOL_SIZE (MAX_SPLIT_DEVICES * 4)
 
 /*
  * We allocate enough pages to guarantee forward progress for a full size bio.
@@ -123,7 +123,8 @@ static void free_bounce_pages(struct xor_io_tracker *t)
 	for (d = 0; d < t->dev_count; d++) {
 		for (s = 0; s < t->n_segs; s++) {
 			if (t->bounce[d][s]) {
-				mempool_free(t->bounce[d][s], t->ctx->page_pool);
+				mempool_free(t->bounce[d][s],
+					     t->ctx->page_pool);
 				t->bounce[d][s] = NULL;
 			}
 		}
@@ -161,10 +162,11 @@ static void complete_orig(struct xor_io_tracker *t)
  *
  * Return: 0 on success, negative error code on failure.
  */
-static int generate_noise(struct xor_ctx *ctx, struct page *dest_page, unsigned int len)
+static int generate_noise(struct xor_ctx *ctx, struct page *dest_page,
+			  unsigned int len)
 {
 	u64 nonce = atomic64_inc_return(&ctx->iv_counter);
-	u8 iv[16] = {0};
+	u8 iv[16] = { 0 };
 	struct scatterlist sg_in, sg_out;
 
 	SYNC_SKCIPHER_REQUEST_ON_STACK(req, ctx->tfm);
@@ -205,7 +207,8 @@ static int generate_noise(struct xor_ctx *ctx, struct page *dest_page, unsigned 
  */
 static void xor_write_worker(struct work_struct *work)
 {
-	struct xor_io_tracker *t = container_of(work, struct xor_io_tracker, work);
+	struct xor_io_tracker *t =
+		container_of(work, struct xor_io_tracker, work);
 	int s, d;
 	int last_disk = t->dev_count - 1;
 
@@ -217,7 +220,8 @@ static void xor_write_worker(struct work_struct *work)
 		/* 1. Generate random noise for disks 0 to N-2 */
 		for (d = 0; d < last_disk; d++) {
 			if (generate_noise(t->ctx, t->bounce[d][s], len) != 0) {
-				pr_err("[%s] crypto encrypt failed for noise\n", DM_MSG_PREFIX);
+				pr_err("[%s] crypto encrypt failed for noise\n",
+				       DM_MSG_PREFIX);
 				t->status = BLK_STS_IOERR;
 			}
 		}
@@ -294,8 +298,7 @@ static void xor_end_io(struct bio *clone)
 	if (!atomic_dec_and_test(&t->pending))
 		return; /* other clones still in flight */
 
-	if (bio_data_dir(t->orig_bio) == READ &&
-	    t->status == BLK_STS_OK &&
+	if (bio_data_dir(t->orig_bio) == READ && t->status == BLK_STS_OK &&
 	    t->n_segs > 0) {
 		/* Decode inline immediately */
 		decode_inline(t);
@@ -328,7 +331,7 @@ static int xor_map(struct dm_target *ti, struct bio *bio)
 	gfp_t gfp = GFP_NOIO;
 	int d, s;
 
-	unsigned int clone_opf = bio->bi_opf;
+	blk_opf_t clone_opf = bio->bi_opf;
 
 	if (bio->bi_opf & REQ_PREFLUSH) {
 		if (!bio_sectors(bio)) {
@@ -356,7 +359,7 @@ static int xor_map(struct dm_target *ti, struct bio *bio)
 
 	if (verbose)
 		pr_info("[%s] map: op=%u sector=%llu size=%u bounce=%d\n",
-			DM_MSG_PREFIX, (__force unsigned) op,
+			DM_MSG_PREFIX, (__force unsigned)op,
 			(unsigned long long)bio->bi_iter.bi_sector,
 			bio->bi_iter.bi_size, (int)needs_bounce);
 
@@ -381,7 +384,8 @@ static int xor_map(struct dm_target *ti, struct bio *bio)
 	if (needs_bounce) {
 		for (d = 0; d < ctx->dev_count; d++) {
 			for (s = 0; s < t->n_segs; s++) {
-				t->bounce[d][s] = mempool_alloc(ctx->page_pool, gfp);
+				t->bounce[d][s] =
+					mempool_alloc(ctx->page_pool, gfp);
 				if (!t->bounce[d][s])
 					goto fail;
 
@@ -391,25 +395,32 @@ static int xor_map(struct dm_target *ti, struct bio *bio)
 		}
 	}
 
+	/* Step 3: Build clone bios */
 	for (d = 0; d < ctx->dev_count; d++) {
 		struct bio *clone;
 		int nr_vecs = needs_bounce ? t->n_segs : 0;
 
-		clone = bio_alloc_bioset(ctx->devs[d]->bdev, nr_vecs,
-					 clone_opf, GFP_NOIO, &ctx->bio_set);
+		clone = bio_alloc_bioset(ctx->devs[d]->bdev, nr_vecs, clone_opf,
+					 gfp, &ctx->bio_set);
 		if (!clone)
 			goto fail;
+
+		/* Ensure we never circularly deadlock the bioset */
+		gfp = GFP_NOWAIT | __GFP_NOWARN;
 
 		t->clones[d] = clone;
 		clone->bi_private = t;
 		clone->bi_end_io = xor_end_io;
-		clone->bi_iter.bi_sector = dm_target_offset(ti, bio->bi_iter.bi_sector);
+		clone->bi_iter.bi_sector =
+			dm_target_offset(ti, bio->bi_iter.bi_sector);
 
 		if (needs_bounce) {
 			for (s = 0; s < t->n_segs; s++) {
 				if (bio_add_page(clone, t->bounce[d][s],
-						 t->segs[s].len, 0) < t->segs[s].len) {
-					pr_err("[%s] bio_add_page failed\n", DM_MSG_PREFIX);
+						 t->segs[s].len,
+						 0) < t->segs[s].len) {
+					pr_err("[%s] bio_add_page failed\n",
+					       DM_MSG_PREFIX);
 					goto fail;
 				}
 			}
@@ -461,7 +472,8 @@ static int xor_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	}
 
 	/* Initialize memory pools for forward progress */
-	ctx->tracker_pool = mempool_create_slab_pool(XOR_BIO_POOL_SIZE, xor_tracker_cache);
+	ctx->tracker_pool =
+		mempool_create_slab_pool(XOR_BIO_POOL_SIZE, xor_tracker_cache);
 	if (!ctx->tracker_pool) {
 		ti->error = "Cannot create tracker mempool";
 		r = -ENOMEM;
@@ -584,13 +596,13 @@ static void xor_dtr(struct dm_target *ti)
 }
 
 static struct target_type xor_target = {
-	.name            = "xor",
-	.version         = { 2, 0, 0 },
-	.module          = THIS_MODULE,
-	.ctr             = xor_ctr,
-	.dtr             = xor_dtr,
-	.map             = xor_map,
-	.status          = xor_status,
+	.name = "xor",
+	.version         = { 2, 2, 0 },
+	.module = THIS_MODULE,
+	.ctr = xor_ctr,
+	.dtr = xor_dtr,
+	.map = xor_map,
+	.status = xor_status,
 	.iterate_devices = xor_iterate_devices,
 };
 
@@ -598,9 +610,8 @@ static int __init dm_xor_init(void)
 {
 	int r;
 
-	xor_tracker_cache = kmem_cache_create("dm_xor_tracker",
-					      sizeof(struct xor_io_tracker),
-					      0, 0, NULL);
+	xor_tracker_cache = kmem_cache_create(
+		"dm_xor_tracker", sizeof(struct xor_io_tracker), 0, 0, NULL);
 	if (!xor_tracker_cache)
 		return -ENOMEM;
 
