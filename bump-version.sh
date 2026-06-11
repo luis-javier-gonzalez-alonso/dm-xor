@@ -46,14 +46,14 @@ run_sed "s/^PACKAGE_VERSION=.*/PACKAGE_VERSION=\"${VERSION}\"/" dkms.conf
 # 6. RPM spec
 run_sed "s/^Version:.*/Version:        ${VERSION}/" rpm/dm-xor-dkms.spec
 
-# 7. dm_xor.c (kernel module target version)
+# 7. dm-xor.c (kernel module target version)
 C_VERSION=$(echo "$VERSION" | sed 's/\./, /g')
-run_sed "s/\.version[[:space:]]*=[[:space:]]*{[[:space:]]*[0-9]*[[:space:]]*,[[:space:]]*[0-9]*[[:space:]]*,[[:space:]]*[0-9]*[[:space:]]*}/.version         = { ${C_VERSION} }/g" dm_xor.c
+run_sed "s/\.version[[:space:]]*=[[:space:]]*{[[:space:]]*[0-9]*[[:space:]]*,[[:space:]]*[0-9]*[[:space:]]*,[[:space:]]*[0-9]*[[:space:]]*}/.version         = { ${C_VERSION} }/g" dm-xor.c
 
 echo "Success! Version bumped to $VERSION."
 echo ""
 echo "To commit and tag this release, run:"
-echo "  git add Makefile arch/PKGBUILD debian/changelog debian/dm-xor-dkms.install dkms.conf rpm/dm-xor-dkms.spec dm_xor.c"
+echo "  git add Makefile arch/PKGBUILD debian/changelog debian/dm-xor-dkms.install dkms.conf rpm/dm-xor-dkms.spec dm-xor.c"
 echo "  git commit -m \"Bump version to $VERSION\""
 echo "  git tag v$VERSION"
 echo "  git push origin main --tags"

@@ -14,9 +14,6 @@ MODULE_VERSION := 1.3.6
 # The final kernel module output name
 obj-m += dm-xor.o
 
-# Tell kbuild which object files compose the final module
-dm-xor-y := dm_xor.o xor_core.o
-
 # Points to the kernel headers for the running kernel
 KDIR ?= /lib/modules/$(shell uname -r)/build
 
@@ -30,13 +27,6 @@ check:
 
 clean:
 	$(MAKE) -C $(KDIR) M=$(CURDIR) clean
-
-# ---- User-space test ----
-
-test:
-	gcc -Wall -O2 test_xor.c xor_core.c -o test_xor
-	./test_xor
-	rm -f test_xor
 
 # ---- DKMS helpers ----
 
@@ -55,5 +45,5 @@ dkms-uninstall:
 bump:
 	@./bump-version.sh $(VERSION)
 
-.PHONY: all check clean test dkms-install dkms-uninstall bump
+.PHONY: all check clean dkms-install dkms-uninstall bump
 

@@ -13,6 +13,6 @@ Description: Device-mapper XOR-split target (DKMS)
  Device-mapper target that XOR-splits data across N disks for data
  security through redundant encoding.
  .
- This package provides the dm_xor_mod kernel module via DKMS,
+ This package provides the dm-xor kernel module via DKMS,
  which will automatically compile and install the module for each
  kernel version installed on the system.

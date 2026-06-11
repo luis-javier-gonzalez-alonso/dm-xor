@@ -1,4 +1,2 @@
-dm_xor.c /usr/src/dm-xor-1.3.6/
-xor_core.c /usr/src/dm-xor-1.3.6/
-xor_core.h /usr/src/dm-xor-1.3.6/
+dm-xor.c /usr/src/dm-xor-1.3.6/
 Makefile /usr/src/dm-xor-1.3.6/
