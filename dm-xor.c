@@ -401,7 +401,7 @@ static int xor_map(struct dm_target *ti, struct bio *bio)
 		t->clones[d] = clone;
 		clone->bi_private = t;
 		clone->bi_end_io = xor_end_io;
-		clone->bi_iter.bi_sector = bio->bi_iter.bi_sector;
+		clone->bi_iter.bi_sector = dm_target_offset(ti, bio->bi_iter.bi_sector);
 
 		if (needs_bounce) {
 			for (s = 0; s < t->n_segs; s++) {
@@ -583,7 +583,7 @@ static void xor_dtr(struct dm_target *ti)
 
 static struct target_type xor_target = {
 	.name            = "xor",
-	.version         = { 2, 1, 0 },
+	.version         = { 2, 1, 1 },
 	.module          = THIS_MODULE,
 	.ctr             = xor_ctr,
 	.dtr             = xor_dtr,
