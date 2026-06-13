@@ -640,7 +640,7 @@ static void xor_dtr(struct dm_target *ti) {
 
 static struct target_type xor_target = {
     .name = "xor",
-    .version         = { 2, 3, 0 },
+    .version         = { 2, 4, 0 },
     .module = THIS_MODULE,
     .ctr = xor_ctr,
     .dtr = xor_dtr,
