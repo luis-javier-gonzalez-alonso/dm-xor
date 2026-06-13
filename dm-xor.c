@@ -48,7 +48,6 @@
  */
 #define XOR_BOUNCE_POOL_SIZE (MAX_SPLIT_DEVICES * BIO_MAX_VECS)
 
-static struct workqueue_struct *xor_wq;
 static struct kmem_cache *xor_tracker_cache;
 
 static bool verbose;
@@ -83,6 +82,7 @@ struct xor_ctx {
   /* Forward progress guarantees */
   mempool_t *tracker_pool;
   mempool_t *page_pool;
+  struct workqueue_struct *wq;
 };
 
 /*
@@ -444,7 +444,7 @@ static int xor_map(struct dm_target *ti, struct bio *bio) {
 
   if (needs_bounce && bio_data_dir(bio) == WRITE) {
     INIT_WORK(&t->work, xor_write_worker);
-    queue_work(xor_wq, &t->work);
+    queue_work(t->ctx->wq, &t->work);
   } else {
     for (d = 0; d < ctx->dev_count; d++)
       submit_bio(t->clones[d]);
@@ -475,11 +475,18 @@ static int xor_ctr(struct dm_target *ti, unsigned int argc, char **argv) {
 
   ctx->dev_count = argc;
 
+  ctx->wq = alloc_workqueue("dm_xor", WQ_MEM_RECLAIM | WQ_UNBOUND, 0);
+  if (!ctx->wq) {
+    ti->error = "Cannot allocate workqueue";
+    r = -ENOMEM;
+    goto bad_ctx;
+  }
+
   r = bioset_init(&ctx->bio_set, XOR_BIO_POOL_SIZE, 0,
                   BIOSET_NEED_BVECS | BIOSET_NEED_RESCUER);
   if (r) {
     ti->error = "Cannot init bioset";
-    goto bad_ctx;
+    goto bad_wq;
   }
 
   /* Initialize memory pools for forward progress */
@@ -551,6 +558,8 @@ bad_tracker_pool:
   mempool_destroy(ctx->tracker_pool);
 bad_bioset:
   bioset_exit(&ctx->bio_set);
+bad_wq:
+  destroy_workqueue(ctx->wq);
 bad_ctx:
   kfree(ctx);
   return r;
@@ -593,7 +602,7 @@ static void xor_dtr(struct dm_target *ti) {
   struct xor_ctx *ctx = ti->private;
   int i;
 
-  drain_workqueue(xor_wq);
+  destroy_workqueue(ctx->wq);
 
   for (i = 0; i < ctx->dev_count; i++)
     dm_put_device(ti, ctx->devs[i]);
@@ -609,7 +618,7 @@ static void xor_dtr(struct dm_target *ti) {
 
 static struct target_type xor_target = {
     .name = "xor",
-    .version         = { 2, 2, 2 },
+    .version         = { 2, 3, 0 },
     .module = THIS_MODULE,
     .ctr = xor_ctr,
     .dtr = xor_dtr,
@@ -626,21 +635,13 @@ static int __init dm_xor_init(void) {
   if (!xor_tracker_cache)
     return -ENOMEM;
 
-  xor_wq = alloc_workqueue("dm_xor", WQ_MEM_RECLAIM | WQ_UNBOUND, 0);
-  if (!xor_wq) {
-    r = -ENOMEM;
-    goto destroy_cache;
-  }
-
   r = dm_register_target(&xor_target);
   if (r < 0)
-    goto destroy_wq;
+    goto destroy_cache;
 
   pr_info("[%s] loaded\n", DM_MSG_PREFIX);
   return 0;
 
-destroy_wq:
-  destroy_workqueue(xor_wq);
 destroy_cache:
   kmem_cache_destroy(xor_tracker_cache);
   return r;
@@ -648,7 +649,6 @@ destroy_cache:
 
 static void __exit dm_xor_exit(void) {
   dm_unregister_target(&xor_target);
-  destroy_workqueue(xor_wq);
   kmem_cache_destroy(xor_tracker_cache);
   pr_info("[%s] unloaded\n", DM_MSG_PREFIX);
 }

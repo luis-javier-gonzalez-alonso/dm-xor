@@ -1,5 +1,5 @@
 Name:           dm-xor-dkms
-Version:        2.2.2
+Version:        2.3.0
 Release:        1%{?dist}
 Summary:        Device-mapper XOR split kernel module (DKMS)
 
