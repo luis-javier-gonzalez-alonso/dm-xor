@@ -213,7 +213,7 @@ static void xor_write_worker(struct work_struct *work) {
   int last_disk = t->dev_count - 1;
 
   if (unlikely(enabled_faults & XOR_FAULT_DELAY_WRITE))
-    msleep(2000);
+    msleep(100);
 
   /* XOR-encode original data into bounce pages */
   for (s = 0; s < t->n_segs; s++) {
@@ -253,9 +253,9 @@ static void xor_write_worker(struct work_struct *work) {
   return;
 
 abort_io:
-  /* 
+  /*
    * If we fail to generate noise, we MUST NOT write uninitialized memory to
-   * the disks (which would leak kernel memory). Abort submission, clean up 
+   * the disks (which would leak kernel memory). Abort submission, clean up
    * clones and bounce pages, and fail the original bio.
    */
   free_bounce_pages(t);
@@ -609,7 +609,7 @@ static void xor_dtr(struct dm_target *ti) {
 
 static struct target_type xor_target = {
     .name = "xor",
-    .version         = { 2, 2, 1 },
+    .version         = { 2, 2, 2 },
     .module = THIS_MODULE,
     .ctr = xor_ctr,
     .dtr = xor_dtr,
