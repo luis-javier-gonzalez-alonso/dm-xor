@@ -286,7 +286,7 @@ static void decode_inline(struct xor_io_tracker *t) {
   int s, d;
 
   if (unlikely(enabled_faults & XOR_FAULT_DELAY_READ))
-    msleep(100);
+    mdelay(100);
 
   for (s = 0; s < t->n_segs; s++) {
     void *dst;
