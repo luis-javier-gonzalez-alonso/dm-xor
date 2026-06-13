@@ -84,7 +84,8 @@ struct xor_ctx {
   mempool_t *tracker_pool;
   mempool_t *page_pool;
   struct workqueue_struct *wq;
-  struct mutex mapping_lock;
+  struct mutex page_lock;
+  struct mutex clone_lock;
 };
 
 /*
@@ -408,11 +409,11 @@ retry_alloc:
             /* Fast path failed, clean up and retry on slow path */
             free_bounce_pages(t);
             fallback = true;
-            mutex_lock(&ctx->mapping_lock);
+            mutex_lock(&ctx->page_lock);
             goto retry_alloc;
           } else {
             /* Should never happen with GFP_NOIO on mempool, but just in case */
-            mutex_unlock(&ctx->mapping_lock);
+            mutex_unlock(&ctx->page_lock);
             goto fail;
           }
         }
@@ -420,44 +421,63 @@ retry_alloc:
     }
 
     if (fallback)
-      mutex_unlock(&ctx->mapping_lock);
+      mutex_unlock(&ctx->page_lock);
   }
 
   /*
-   * Build clone bios
-   * Reset gfp to GFP_NOIO so the first bio allocation from bio_set can
-   * properly block and wait if the pool is empty.
+   * Build clone bios using optimistic NOWAIT with serialized fallback
    */
-  gfp = GFP_NOIO;
-  for (d = 0; d < ctx->dev_count; d++) {
-    struct bio *clone;
-    int nr_vecs = needs_bounce ? t->n_segs : 0;
+  {
+    bool clone_fallback = false;
 
-    clone = bio_alloc_bioset(ctx->devs[d]->bdev, nr_vecs, clone_opf, gfp,
-                             &ctx->bio_set);
-    if (!clone)
-      goto fail;
+retry_clone_alloc:
+    gfp = clone_fallback ? GFP_NOIO : (GFP_NOWAIT | __GFP_NOWARN);
 
-    /* Ensure we never circularly deadlock the bioset */
-    gfp = GFP_NOWAIT | __GFP_NOWARN;
+    for (d = 0; d < ctx->dev_count; d++) {
+      struct bio *clone;
+      int nr_vecs = needs_bounce ? t->n_segs : 0;
 
-    t->clones[d] = clone;
-    clone->bi_private = t;
-    clone->bi_end_io = xor_end_io;
-    clone->bi_iter.bi_sector = dm_target_offset(ti, bio->bi_iter.bi_sector);
-
-    if (needs_bounce) {
-      for (s = 0; s < t->n_segs; s++) {
-        if (bio_add_page(clone, t->bounce[d][s], t->segs[s].len, 0) <
-            t->segs[s].len) {
-          pr_err("[%s] bio_add_page failed\n", DM_MSG_PREFIX);
+      clone = bio_alloc_bioset(ctx->devs[d]->bdev, nr_vecs, clone_opf, gfp,
+                               &ctx->bio_set);
+      if (!clone) {
+        if (!clone_fallback) {
+          int i;
+          for (i = 0; i < d; i++) {
+            bio_put(t->clones[i]);
+            t->clones[i] = NULL;
+          }
+          clone_fallback = true;
+          mutex_lock(&ctx->clone_lock);
+          goto retry_clone_alloc;
+        } else {
+          mutex_unlock(&ctx->clone_lock);
           goto fail;
         }
       }
-    } else {
-      /* Thin clone for FLUSH */
-      clone->bi_iter.bi_size = bio->bi_iter.bi_size;
+
+      t->clones[d] = clone;
+      clone->bi_private = t;
+      clone->bi_end_io = xor_end_io;
+      clone->bi_iter.bi_sector = dm_target_offset(ti, bio->bi_iter.bi_sector);
+
+      if (needs_bounce) {
+        for (s = 0; s < t->n_segs; s++) {
+          if (bio_add_page(clone, t->bounce[d][s], t->segs[s].len, 0) <
+              t->segs[s].len) {
+            pr_err("[%s] bio_add_page failed\n", DM_MSG_PREFIX);
+            if (clone_fallback)
+              mutex_unlock(&ctx->clone_lock);
+            goto fail;
+          }
+        }
+      } else {
+        /* Thin clone for FLUSH */
+        clone->bi_iter.bi_size = bio->bi_iter.bi_size;
+      }
     }
+
+    if (clone_fallback)
+      mutex_unlock(&ctx->clone_lock);
   }
 
   if (needs_bounce && bio_data_dir(bio) == WRITE) {
@@ -500,7 +520,8 @@ static int xor_ctr(struct dm_target *ti, unsigned int argc, char **argv) {
     goto bad_ctx;
   }
 
-  mutex_init(&ctx->mapping_lock);
+  mutex_init(&ctx->page_lock);
+  mutex_init(&ctx->clone_lock);
 
   r = bioset_init(&ctx->bio_set, XOR_BIO_POOL_SIZE, 0,
                   BIOSET_NEED_BVECS | BIOSET_NEED_RESCUER);
@@ -580,7 +601,8 @@ bad_bioset:
   bioset_exit(&ctx->bio_set);
 bad_wq:
   destroy_workqueue(ctx->wq);
-  mutex_destroy(&ctx->mapping_lock);
+  mutex_destroy(&ctx->page_lock);
+  mutex_destroy(&ctx->clone_lock);
 bad_ctx:
   kfree(ctx);
   return r;
@@ -624,7 +646,8 @@ static void xor_dtr(struct dm_target *ti) {
   int i;
 
   destroy_workqueue(ctx->wq);
-  mutex_destroy(&ctx->mapping_lock);
+  mutex_destroy(&ctx->page_lock);
+  mutex_destroy(&ctx->clone_lock);
 
   for (i = 0; i < ctx->dev_count; i++)
     dm_put_device(ti, ctx->devs[i]);
