@@ -359,7 +359,7 @@ static int xor_map(struct dm_target *ti, struct bio *bio) {
     needs_bounce = (op == REQ_OP_READ || op == REQ_OP_WRITE);
   }
 
-  t = mempool_alloc(ctx->tracker_pool, GFP_NOIO);
+  t = mempool_alloc(ctx->tracker_pool, GFP_NOWAIT);
   if (!t)
     return DM_MAPIO_REQUEUE;
 
