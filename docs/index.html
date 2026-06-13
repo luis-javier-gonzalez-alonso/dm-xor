@@ -72,6 +72,10 @@
                         <p>Write/encode operations are offloaded to an unbound, concurrent workqueue to prevent blocking the application thread.</p>
                     </div>
                     <div class="feature-card">
+                        <h4>🥷 Strict Metadata Hiding</h4>
+                        <p>Intentionally drops DISCARD and WRITE_ZEROES commands so free space is encrypted as random noise, preserving plausible deniability.</p>
+                    </div>
+                    <div class="feature-card">
                         <h4>📦 Multi-Distro Support</h4>
                         <p>Includes native packaging scripts and automated pipelines for Debian, RHEL/Fedora, and Arch Linux.</p>
                     </div>
@@ -191,7 +195,15 @@ echo "0 204800 xor /dev/loop10 /dev/loop11 /dev/loop12" | sudo dmsetup create se
                     <button class="copy-btn" onclick="copyCode(this)">Copy</button>
                 </div>
 
-                <h3>3. Format and Mount the Drive</h3>
+                <h3>3. Initialization (Secure Setup)</h3>
+                <p>To achieve plausible deniability, you must fill the physical drives with indistinguishable cryptographic noise before formatting. Wiping the virtual device with zeroes will cause `dm-xor` to securely encrypt them into random noise:</p>
+                <div class="code-block-wrapper">
+                    <pre><code class="lang-bash"># Write encrypted zeroes across all underlying disks
+sudo dd if=/dev/zero of=/dev/mapper/secure-xor bs=4M status=progress</code></pre>
+                    <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+                </div>
+
+                <h3>4. Format and Mount the Drive</h3>
                 <p>The new device is available at <code>/dev/mapper/secure-xor</code>. Treat it like any regular hard drive:</p>
                 <div class="code-block-wrapper">
                     <pre><code class="lang-bash"># Format with EXT4 filesystem
@@ -206,7 +218,15 @@ echo "Confidential Data" | sudo tee /mnt/secure_data/secrets.txt</code></pre>
                     <button class="copy-btn" onclick="copyCode(this)">Copy</button>
                 </div>
 
-                <h3>4. Verify Security</h3>
+                <h3>5. Best Practices: Secure Deletion</h3>
+                <p>Because <code>dm-xor</code> intentionally drops <code>DISCARD</code> (TRIM) operations to prevent metadata leakage, deleting a file via standard <code>rm</code> leaves the encrypted plaintext on disk until overwritten.</p>
+                <p>To permanently destroy sensitive files, securely overwrite them with zeroes or random data using the <code>shred</code> utility before deletion:</p>
+                <div class="code-block-wrapper">
+                    <pre><code class="lang-bash">shred -u /path/to/sensitive/file</code></pre>
+                    <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+                </div>
+
+                <h3>6. Verify Security</h3>
                 <p>Unmount and remove the target to sync data to backing files, and inspect the individual files. You'll notice they look like random static garbage:</p>
                 <div class="code-block-wrapper">
                     <pre><code class="lang-bash"># Unmount and clean up target

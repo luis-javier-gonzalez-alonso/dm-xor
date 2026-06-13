@@ -304,7 +304,7 @@ static void xor_end_io(struct bio *clone)
 		decode_inline(t);
 	}
 
-	/* Handles WRITE, FLUSH, DISCARD, WRITE_ZEROES, or error paths */
+	/* Handles WRITE, FLUSH, or error paths */
 	free_bounce_pages(t);
 	free_clones(t);
 	complete_orig(t);
@@ -425,7 +425,7 @@ static int xor_map(struct dm_target *ti, struct bio *bio)
 				}
 			}
 		} else {
-			/* Thin clone for FLUSH/DISCARD/WRITE_ZEROES */
+			/* Thin clone for FLUSH */
 			clone->bi_iter.bi_size = bio->bi_iter.bi_size;
 		}
 	}
@@ -515,8 +515,13 @@ static int xor_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	}
 
 	ti->num_flush_bios = 1;
-	ti->num_discard_bios = 1;
-	ti->num_write_zeroes_bios = 1;
+
+	/*
+	 * We intentionally do not set num_discard_bios or num_write_zeroes_bios.
+	 * Passing these down would leak metadata (zeroes and unused blocks) to
+	 * the physical disks, defeating the secret sharing. The block layer
+	 * will safely fall back to sending zeroed pages as normal WRITEs.
+	 */
 
 	/* Prevent bios from expanding beyond BIO_MAX_VECS pages */
 	ti->max_io_len = (BIO_MAX_VECS - 1) * (PAGE_SIZE >> 9);
