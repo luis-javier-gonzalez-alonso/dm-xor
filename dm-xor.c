@@ -215,6 +215,7 @@ static void xor_write_worker(struct work_struct *work) {
       if (generate_noise(t->ctx, t->bounce[d][s], len) != 0) {
         pr_err("[%s] crypto encrypt failed for noise\n", DM_MSG_PREFIX);
         t->status = BLK_STS_IOERR;
+        goto abort_io;
       }
     }
 
@@ -238,6 +239,18 @@ static void xor_write_worker(struct work_struct *work) {
 
   for (d = 0; d < t->dev_count; d++)
     submit_bio(t->clones[d]);
+
+  return;
+
+abort_io:
+  /* 
+   * If we fail to generate noise, we MUST NOT write uninitialized memory to
+   * the disks (which would leak kernel memory). Abort submission, clean up 
+   * clones and bounce pages, and fail the original bio.
+   */
+  free_bounce_pages(t);
+  free_clones(t);
+  complete_orig(t);
 }
 
 /**
