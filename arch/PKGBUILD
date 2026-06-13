@@ -1,7 +1,7 @@
 # Maintainer: Luis Javier González Alonso <luis-javier-gonzalez-alonso@users.noreply.github.com>
 
 pkgname=dm-xor-dkms
-pkgver=2.4.0
+pkgver=2.4.1
 pkgrel=1
 pkgdesc="Device-mapper XOR split kernel module (DKMS)"
 arch=('any')
