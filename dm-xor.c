@@ -21,6 +21,7 @@
 #include <crypto/algapi.h>
 #include <crypto/skcipher.h>
 #include <linux/bio.h>
+#include <linux/delay.h>
 #include <linux/device-mapper.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
@@ -53,6 +54,12 @@ static struct kmem_cache *xor_tracker_cache;
 static bool verbose;
 module_param(verbose, bool, 0644);
 MODULE_PARM_DESC(verbose, "Log every map() call to dmesg");
+
+#define XOR_FAULT_DELAY_WRITE (1 << 0)
+
+static unsigned int enabled_faults;
+module_param(enabled_faults, uint, 0644);
+MODULE_PARM_DESC(enabled_faults, "Bitmask of injected faults (1=delay write)");
 
 /**
  * struct xor_ctx - Target configuration context
@@ -204,6 +211,9 @@ static void xor_write_worker(struct work_struct *work) {
   struct xor_io_tracker *t = container_of(work, struct xor_io_tracker, work);
   int s, d;
   int last_disk = t->dev_count - 1;
+
+  if (unlikely(enabled_faults & XOR_FAULT_DELAY_WRITE))
+    msleep(2000);
 
   /* XOR-encode original data into bounce pages */
   for (s = 0; s < t->n_segs; s++) {
