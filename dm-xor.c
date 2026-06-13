@@ -27,6 +27,7 @@
 #include <linux/kernel.h>
 #include <linux/mempool.h>
 #include <linux/module.h>
+#include <linux/mutex.h>
 #include <linux/random.h>
 #include <linux/scatterlist.h>
 #include <linux/slab.h>
@@ -83,6 +84,7 @@ struct xor_ctx {
   mempool_t *tracker_pool;
   mempool_t *page_pool;
   struct workqueue_struct *wq;
+  struct mutex mapping_lock;
 };
 
 /*
@@ -393,16 +395,32 @@ static int xor_map(struct dm_target *ti, struct bio *bio) {
   }
 
   if (needs_bounce) {
+    bool fallback = false;
+
+retry_alloc:
+    gfp = fallback ? GFP_NOIO : (GFP_NOWAIT | __GFP_NOWARN);
+
     for (d = 0; d < ctx->dev_count; d++) {
       for (s = 0; s < t->n_segs; s++) {
         t->bounce[d][s] = mempool_alloc(ctx->page_pool, gfp);
-        if (!t->bounce[d][s])
-          goto fail;
-
-        /* All subsequent allocations must not block */
-        gfp = GFP_NOWAIT | __GFP_NOWARN;
+        if (!t->bounce[d][s]) {
+          if (!fallback) {
+            /* Fast path failed, clean up and retry on slow path */
+            free_bounce_pages(t);
+            fallback = true;
+            mutex_lock(&ctx->mapping_lock);
+            goto retry_alloc;
+          } else {
+            /* Should never happen with GFP_NOIO on mempool, but just in case */
+            mutex_unlock(&ctx->mapping_lock);
+            goto fail;
+          }
+        }
       }
     }
+
+    if (fallback)
+      mutex_unlock(&ctx->mapping_lock);
   }
 
   /*
@@ -482,6 +500,8 @@ static int xor_ctr(struct dm_target *ti, unsigned int argc, char **argv) {
     goto bad_ctx;
   }
 
+  mutex_init(&ctx->mapping_lock);
+
   r = bioset_init(&ctx->bio_set, XOR_BIO_POOL_SIZE, 0,
                   BIOSET_NEED_BVECS | BIOSET_NEED_RESCUER);
   if (r) {
@@ -560,6 +580,7 @@ bad_bioset:
   bioset_exit(&ctx->bio_set);
 bad_wq:
   destroy_workqueue(ctx->wq);
+  mutex_destroy(&ctx->mapping_lock);
 bad_ctx:
   kfree(ctx);
   return r;
@@ -603,6 +624,7 @@ static void xor_dtr(struct dm_target *ti) {
   int i;
 
   destroy_workqueue(ctx->wq);
+  mutex_destroy(&ctx->mapping_lock);
 
   for (i = 0; i < ctx->dev_count; i++)
     dm_put_device(ti, ctx->devs[i]);
