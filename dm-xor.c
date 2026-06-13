@@ -56,10 +56,15 @@ module_param(verbose, bool, 0644);
 MODULE_PARM_DESC(verbose, "Log every map() call to dmesg");
 
 #define XOR_FAULT_DELAY_WRITE (1 << 0)
+#define XOR_FAULT_DELAY_READ  (1 << 1)
+#define XOR_FAULT_OOM_TRACKER (1 << 2)
+#define XOR_FAULT_OOM_PAGE    (1 << 3)
+#define XOR_FAULT_OOM_CLONE   (1 << 4)
+#define XOR_FAULT_CRYPTO_FAIL (1 << 5)
 
 static unsigned int enabled_faults;
 module_param(enabled_faults, uint, 0644);
-MODULE_PARM_DESC(enabled_faults, "Bitmask of injected faults (1=delay write)");
+MODULE_PARM_DESC(enabled_faults, "Bitmask of injected faults (1=delay write, 2=delay read, 4=oom tracker, 8=oom page, 16=oom clone, 32=crypto fail)");
 
 /**
  * struct xor_ctx - Target configuration context
@@ -177,6 +182,9 @@ static int generate_noise(struct xor_ctx *ctx, struct page *dest_page,
   SYNC_SKCIPHER_REQUEST_ON_STACK(req, ctx->tfm);
   int ret;
 
+  if (unlikely(enabled_faults & XOR_FAULT_CRYPTO_FAIL))
+    return -EIO;
+
   /*
    * The block layer guarantees len <= PAGE_SIZE via bio_for_each_segment.
    * If len > PAGE_SIZE, the cipher would read past the end of ZERO_PAGE(0).
@@ -277,6 +285,9 @@ abort_io:
 static void decode_inline(struct xor_io_tracker *t) {
   int s, d;
 
+  if (unlikely(enabled_faults & XOR_FAULT_DELAY_READ))
+    msleep(100);
+
   for (s = 0; s < t->n_segs; s++) {
     void *dst;
     unsigned int len = t->segs[s].len;
@@ -359,7 +370,10 @@ static int xor_map(struct dm_target *ti, struct bio *bio) {
     needs_bounce = (op == REQ_OP_READ || op == REQ_OP_WRITE);
   }
 
-  t = mempool_alloc(ctx->tracker_pool, GFP_NOWAIT);
+  if (unlikely(enabled_faults & XOR_FAULT_OOM_TRACKER))
+    t = NULL;
+  else
+    t = mempool_alloc(ctx->tracker_pool, GFP_NOWAIT);
   if (!t)
     return DM_MAPIO_REQUEUE;
 
@@ -403,7 +417,10 @@ retry_alloc:
 
     for (d = 0; d < ctx->dev_count; d++) {
       for (s = 0; s < t->n_segs; s++) {
-        t->bounce[d][s] = mempool_alloc(ctx->page_pool, gfp);
+        if (unlikely(!fallback && (enabled_faults & XOR_FAULT_OOM_PAGE)))
+          t->bounce[d][s] = NULL;
+        else
+          t->bounce[d][s] = mempool_alloc(ctx->page_pool, gfp);
         if (!t->bounce[d][s]) {
           if (!fallback) {
             /* Fast path failed, clean up and retry on slow path */
@@ -437,8 +454,11 @@ retry_clone_alloc:
       struct bio *clone;
       int nr_vecs = needs_bounce ? t->n_segs : 0;
 
-      clone = bio_alloc_bioset(ctx->devs[d]->bdev, nr_vecs, clone_opf, gfp,
-                               &ctx->bio_set);
+      if (unlikely(!clone_fallback && (enabled_faults & XOR_FAULT_OOM_CLONE)))
+        clone = NULL;
+      else
+        clone = bio_alloc_bioset(ctx->devs[d]->bdev, nr_vecs, clone_opf, gfp,
+                                 &ctx->bio_set);
       if (!clone) {
         if (!clone_fallback) {
           int i;
